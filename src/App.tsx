@@ -1,51 +1,73 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useState, useEffect, useRef } from 'react'
+import './App.css'
+import Sidebar from './components/Sidebar'
+import ChatInterface from './components/ChatInterface'
+import LoadingScreen from './components/LoadingScreen'
+import { apiService } from './services/api'
+import type { Document, ThreadMessage } from './types'
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [documents, setDocuments] = useState<Document[]>([])
+  const [isBackendReady, setIsBackendReady] = useState(false)
+  const intervalRef = useRef<number | null>(null)
+  const isReadyRef = useRef(false)
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  // Start polling for backend status
+  useEffect(() => {
+    const checkBackendStatus = async () => {
+      if (isReadyRef.current) return
+
+      try {
+        const response = await apiService.checkStatus()
+        if (response.status === 'ready') {
+          isReadyRef.current = true
+          setIsBackendReady(true)
+        }
+      } catch {
+        // Backend not up yet, continue polling
+      }
+    }
+
+    if (!isReadyRef.current) {
+      intervalRef.current = window.setInterval(checkBackendStatus, 2000)
+      checkBackendStatus()
+    }
+
+    return () => {
+      if (intervalRef.current !== null) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [])
+
+  // Ensure polling stops when backend is ready
+  useEffect(() => {
+    if (isBackendReady && intervalRef.current !== null) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+  }, [isBackendReady])
+
+  const handleLoadThread = (threadId: string, messages: ThreadMessage[]) => {
+    // use the exposed function from ChatInterface
+    if ((window as any).loadThreadIntoChat) {
+      ;(window as any).loadThreadIntoChat(threadId, messages)
+    }
+  }
+
+  if (!isBackendReady) {
+    return <LoadingScreen />
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <div className="app">
+      <div className="app-container">
+        <Sidebar documents={documents} onLoadThread={handleLoadThread} />
+        <ChatInterface setDocuments={setDocuments} onLoadThread={handleLoadThread} />
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
-  );
+    </div>
+  )
 }
 
-export default App;
+export default App

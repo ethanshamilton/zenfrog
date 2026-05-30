@@ -1,38 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-import axios from 'axios'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import type { Thread, ThreadMessage, SearchIteration, MessageMetadata, Document as JournalDocument } from '../types'
-
-const API_BASE_URL = 'http://localhost:8000'
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-})
-
-export interface QueryRequest {
-  query: string
-  top_k?: number
-}
-
-export interface LLMRequest {
-  prompt: string
-  provider: string
-  model: string
-}
-
-export interface SimilarEntry {
-  [key: string]: any
-}
-
-export interface SimilarEntriesResponse {
-  results: [SimilarEntry, number][]
-}
-
-export interface LLMResponse {
-  response: string
-}
 
 export interface Entry {
   date: string
@@ -40,6 +7,7 @@ export interface Entry {
   text: string
   tags: string[]
   embedding?: number[] | null
+  entry_type: string
 }
 
 export interface RetrievedDoc {
@@ -72,55 +40,47 @@ export interface StatusResponse {
   status: string
 }
 
+type StreamEvent =
+  | { type: 'SearchIteration'; data: SearchIteration }
+  | { type: 'ChatResponse'; data: ChatResponse }
+  | { type: 'Error'; data: { error: string } }
+
 export const apiService = {
-  async getSimilarEntries(request: QueryRequest): Promise<SimilarEntriesResponse> {
-    const response = await api.post<SimilarEntriesResponse>('/similar_entries', {
-      query: request.query,
-      top_k: request.top_k || 5,
-    })
-    return response.data
-  },
-
-  async queryLLM(request: LLMRequest): Promise<LLMResponse> {
-    const response = await api.post<LLMResponse>('/query_llm', request)
-    return response.data
-  },
-
   // Thread management methods
   async createThread(title?: string, initialMessage?: string): Promise<{ thread_id: string; created_at: string }> {
-    const response = await api.post('/threads', {
-      title,
-      initial_message: initialMessage
+    return invoke('create_thread', {
+      req: {
+        title,
+        initial_message: initialMessage,
+      },
     })
-    return response.data
   },
 
   async getThreads(): Promise<Thread[]> {
-    const response = await api.get<Thread[]>('/threads')
-    return response.data
+    return invoke('get_threads')
   },
 
   async getThread(threadId: string): Promise<Thread> {
-    const response = await api.get<Thread>(`/threads/${threadId}`)
-    return response.data
+    return invoke('get_thread', { threadId })
   },
 
   async getThreadMessages(threadId: string): Promise<ThreadMessage[]> {
-    const response = await api.get<ThreadMessage[]>(`/threads/${threadId}/messages`)
-    return response.data
+    return invoke('get_thread_messages', { threadId })
   },
 
   async deleteThread(threadId: string): Promise<void> {
-    await api.delete(`/threads/${threadId}`)
+    return invoke('delete_thread', { threadId })
   },
 
   async updateThreadTitle(threadId: string, title: string): Promise<void> {
-    await api.put(`/threads/${threadId}`, { title })
+    return invoke('update_thread_title', {
+      threadId,
+      req: { title },
+    })
   },
 
   async generateThreadTitle(threadId: string): Promise<{ title: string }> {
-    const response = await api.post<{ title: string }>(`/threads/${threadId}/generate-title`)
-    return response.data
+    return invoke('generate_thread_title', { threadId })
   },
 
   async addMessageToThread(
@@ -129,12 +89,14 @@ export const apiService = {
     content: string,
     metadata?: MessageMetadata | null,
   ): Promise<ThreadMessage> {
-    const response = await api.post<ThreadMessage>(`/threads/${threadId}/messages`, {
-      role,
-      content,
-      metadata,
+    return invoke('add_message_to_thread', {
+      threadId,
+      req: {
+        role,
+        content,
+        metadata,
+      },
     })
-    return response.data
   },
 
   async queryJournalStream(
@@ -142,52 +104,31 @@ export const apiService = {
     onIteration: (iteration: SearchIteration) => void,
     onComplete: (response: ChatResponse) => void,
   ): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/journal_chat_agent/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    })
+    let streamError: Error | null = null
 
-    if (!response.ok || !response.body) {
-      throw new Error(`Stream request failed: ${response.status}`)
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let currentEvent = ''
-    let responseReceived = false
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.slice(7).trim()
-        } else if (line.startsWith('data: ')) {
-          const data = JSON.parse(line.slice(6))
-          if (currentEvent === 'search_iteration') {
-            onIteration(data as SearchIteration)
-          } else if (currentEvent === 'chat_response') {
-            responseReceived = true
-            onComplete(data as ChatResponse)
-          } else if (currentEvent === 'error') {
-            throw new Error((data as { error: string }).error || 'Stream error occurred')
-          }
-        }
+    const channel = new Channel<StreamEvent>()
+    channel.onmessage = (event) => {
+      switch (event.type) {
+        case 'SearchIteration':
+          onIteration(event.data)
+          break
+        case 'ChatResponse':
+          onComplete(event.data)
+          break
+        case 'Error':
+          streamError = new Error(event.data.error || 'Stream error occurred')
+          break
       }
     }
 
-    if (!responseReceived) {
-      throw new Error('Stream ended without receiving a response')
+    await invoke('journal_chat_agent_stream', { req: request, onEvent: channel })
+
+    if (streamError) {
+      throw streamError
     }
   },
 
   async checkStatus(): Promise<StatusResponse> {
-    return invoke<StatusResponse>('get_status')
+    return invoke('get_status')
   },
 }

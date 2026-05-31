@@ -32,4 +32,6 @@ tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 lancedb = "0.30.0"
 dotenvy = "0.15"
+baml = "0.221.0"
+reqwest = { version = "0.12", features = ["json"] }
 

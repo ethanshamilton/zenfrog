@@ -1,0 +1,656 @@
+use std::{collections::HashMap, fs, path::PathBuf};
+
+use serde::Deserialize;
+use serde_json::json;
+
+use crate::{
+    baml_client::{
+        async_client::B,
+        types::{SearchOptions as BamlSearchOptions, SearchToolCall, SearchToolType},
+    },
+    db::Db,
+    models::{
+        ChatRequest, ChatResponse, Entry, Message, MessageContextEntry, MessageMetadata,
+        MessageModelMetadata, MessagePersonalityMetadata, RetrievedDoc, SearchIteration,
+    },
+};
+
+const DEFAULT_PERSONALITY_PROMPT: &str = "";
+const MAX_AGENT_ITERATIONS: i64 = 5;
+const RECENT_PRESEED_COUNT: usize = 4;
+const DEFAULT_LIMIT: usize = 5;
+const MAX_CONTEXT_CHARS: usize = 48_000;
+
+#[derive(Debug, Deserialize)]
+struct GeminiEmbeddingValue {
+    values: Vec<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiEmbeddingResponse {
+    embedding: Option<GeminiEmbeddingValue>,
+    embeddings: Option<Vec<GeminiEmbeddingValue>>,
+}
+
+#[derive(Debug, Clone)]
+struct RetrievedEntry {
+    entry: Entry,
+    distance: Option<f64>,
+    source: String,
+}
+
+#[derive(Debug, Default)]
+struct AgentSearchState {
+    entries: HashMap<String, RetrievedEntry>,
+    ordered_keys: Vec<String>,
+    search_trace: Vec<SearchIteration>,
+}
+
+impl AgentSearchState {
+    fn key(entry: &Entry) -> String {
+        format!("{}::{}::{}", entry.date, entry.title, entry.entry_type)
+    }
+
+    fn add_entry(&mut self, entry: Entry, distance: Option<f64>, source: impl Into<String>) -> bool {
+        let key = Self::key(&entry);
+        if self.entries.contains_key(&key) {
+            return false;
+        }
+        self.ordered_keys.push(key.clone());
+        self.entries.insert(
+            key,
+            RetrievedEntry {
+                entry,
+                distance,
+                source: source.into(),
+            },
+        );
+        true
+    }
+
+    fn add_entries<I>(&mut self, entries: I, source: impl Into<String> + Clone) -> usize
+    where
+        I: IntoIterator<Item = (Entry, Option<f64>)>,
+    {
+        entries
+            .into_iter()
+            .filter(|(entry, distance)| self.add_entry(entry.clone(), *distance, source.clone()))
+            .count()
+    }
+
+    fn record_iteration(
+        &mut self,
+        iteration: i32,
+        tool: impl Into<String>,
+        reasoning: impl Into<String>,
+        query: Option<String>,
+        results_count: i32,
+        new_entries_added: i32,
+    ) -> SearchIteration {
+        let step = SearchIteration {
+            iteration,
+            tool: tool.into(),
+            reasoning: reasoning.into(),
+            query,
+            results_count,
+            new_entries_added,
+        };
+        self.search_trace.push(step.clone());
+        step
+    }
+
+    fn context_entries(&self) -> Vec<MessageContextEntry> {
+        self.ordered_keys
+            .iter()
+            .filter_map(|key| self.entries.get(key))
+            .map(|retrieved| entry_to_context(&retrieved.entry, retrieved.distance, &retrieved.source))
+            .collect()
+    }
+
+    fn context_string(&self) -> String {
+        let entries = self.context_entries();
+        let mut rendered = Vec::new();
+        let mut total = 0usize;
+
+        for (idx, entry) in entries.iter().enumerate() {
+            let block = format!(
+                "<ENTRY index=\"{}\" date=\"{}\" title=\"{}\" type=\"{}\" source=\"{}\">\nTags: {}\n{}\n</ENTRY>",
+                idx + 1,
+                entry.date.as_deref().unwrap_or(""),
+                entry.title,
+                entry.entry_type,
+                entry.source,
+                entry.tags.join(", "),
+                entry.text
+            );
+            total += block.len();
+            if total > MAX_CONTEXT_CHARS {
+                rendered.push("<TRUNCATED>Additional retrieved entries omitted to stay within context limits.</TRUNCATED>".to_string());
+                break;
+            }
+            rendered.push(block);
+        }
+
+        rendered.join("\n\n")
+    }
+
+    fn trace_string(&self) -> String {
+        trace_to_string(&self.search_trace)
+    }
+}
+
+fn custom_instructions_path() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    [
+        cwd.join("CUSTOM_INSTRUCTIONS.md"),
+        cwd.join("..").join("CUSTOM_INSTRUCTIONS.md"),
+        cwd.join("..").join("..").join("CUSTOM_INSTRUCTIONS.md"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+pub fn load_custom_instructions() -> String {
+    custom_instructions_path()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+async fn get_embedding(text: &str) -> Result<Vec<f64>, String> {
+    let api_key = std::env::var("GOOGLE_API_KEY")
+        .map_err(|_| "GOOGLE_API_KEY is required for vector search embeddings".to_string())?;
+    let model = std::env::var("ZENFROG_EMBEDDING_MODEL")
+        .unwrap_or_else(|_| "gemini-embedding-001".to_string());
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent?key={api_key}"
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(url)
+        .json(&json!({
+            "model": format!("models/{model}"),
+            "content": {
+                "parts": [{ "text": text }]
+            }
+        }))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("embedding request failed ({status}): {body}"));
+    }
+
+    let parsed = response
+        .json::<GeminiEmbeddingResponse>()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    parsed
+        .embedding
+        .map(|embedding| embedding.values)
+        .or_else(|| parsed.embeddings.and_then(|mut embeddings| embeddings.pop().map(|e| e.values)))
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| "embedding API returned no values".to_string())
+}
+
+fn selected_client(req: &ChatRequest) -> Option<String> {
+    if req.provider.trim().is_empty() || req.model.trim().is_empty() {
+        None
+    } else {
+        Some(format!("{}/{}", req.provider.trim(), req.model.trim()))
+    }
+}
+
+fn format_message_values(values: &[serde_json::Value]) -> Vec<String> {
+    values
+        .iter()
+        .map(|msg| {
+            let role = msg
+                .get("role")
+                .or_else(|| msg.get("sender"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_uppercase();
+            let content = msg
+                .get("content")
+                .or_else(|| msg.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            format!("[{role}]: {content}")
+        })
+        .collect()
+}
+
+fn format_messages(messages: &[Message], request_history: Option<&[serde_json::Value]>) -> String {
+    let mut lines = messages
+        .iter()
+        .map(|msg| format!("[{}]: {}", msg.role.to_uppercase(), msg.content))
+        .collect::<Vec<_>>();
+
+    if let Some(history) = request_history {
+        lines.extend(format_message_values(history));
+    }
+
+    lines.join("\n\n")
+}
+
+fn entry_to_context(entry: &Entry, distance: Option<f64>, source: &str) -> MessageContextEntry {
+    MessageContextEntry {
+        date: Some(entry.date.clone()),
+        title: entry.title.clone(),
+        entry_type: entry.entry_type.clone(),
+        text: entry.text.clone(),
+        tags: entry.tags.clone(),
+        distance,
+        source: source.to_string(),
+    }
+}
+
+fn format_entries(entries: &[MessageContextEntry]) -> String {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(idx, entry)| {
+            format!(
+                "<ENTRY index=\"{}\" date=\"{}\" title=\"{}\" type=\"{}\" source=\"{}\">\nTags: {}\n{}\n</ENTRY>",
+                idx + 1,
+                entry.date.as_deref().unwrap_or(""),
+                entry.title,
+                entry.entry_type,
+                entry.source,
+                entry.tags.join(", "),
+                entry.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn docs_from_context(entries: &[MessageContextEntry]) -> Vec<RetrievedDoc> {
+    entries
+        .iter()
+        .map(|ctx| RetrievedDoc {
+            entry: Entry {
+                date: ctx.date.clone().unwrap_or_default(),
+                title: ctx.title.clone(),
+                text: ctx.text.clone(),
+                tags: ctx.tags.clone(),
+                embedding: None,
+                entry_type: ctx.entry_type.clone(),
+            },
+            distance: ctx.distance,
+        })
+        .collect()
+}
+
+async fn load_chat_history(db: &Db, req: &ChatRequest) -> Result<Vec<Message>, String> {
+    match &req.thread_id {
+        Some(thread_id) if !thread_id.trim().is_empty() => db
+            .get_thread_messages(thread_id.clone())
+            .await
+            .map_err(|err| err.to_string()),
+        _ => Ok(vec![]),
+    }
+}
+
+async fn initial_context(db: &Db, req: &ChatRequest) -> Result<(Vec<MessageContextEntry>, Vec<SearchIteration>), String> {
+    let mut context = Vec::new();
+    let mut trace = Vec::new();
+
+    if let Some(values) = &req.existing_docs {
+        for value in values {
+            let maybe_entry = value
+                .get("entry")
+                .cloned()
+                .or_else(|| Some(value.clone()))
+                .and_then(|v| serde_json::from_value::<Entry>(v).ok());
+            if let Some(entry) = maybe_entry {
+                let distance = value.get("distance").and_then(|v| v.as_f64());
+                context.push(entry_to_context(&entry, distance, "existing_docs"));
+            }
+        }
+
+        if !context.is_empty() {
+            trace.push(SearchIteration {
+                iteration: 0,
+                tool: "EXISTING_DOCS".to_string(),
+                reasoning: "Reused relevant documents supplied by the frontend.".to_string(),
+                query: Some(req.query.clone()),
+                results_count: context.len() as i32,
+                new_entries_added: context.len() as i32,
+            });
+            return Ok((context, trace));
+        }
+    }
+
+    let search_mode = B
+        .IntentClassifier
+        .call(req.query.as_str())
+        .await
+        .unwrap_or(BamlSearchOptions::RECENT);
+
+    match search_mode {
+        BamlSearchOptions::VECTOR => {
+            let limit = req.top_k.unwrap_or(DEFAULT_LIMIT as i32).max(1) as usize;
+            match get_embedding(&req.query).await {
+                Ok(embedding) => {
+                    let results = db
+                        .get_similar_entries(embedding, limit)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    for (entry, distance) in &results {
+                        context.push(entry_to_context(entry, Some(*distance), "vector_search"));
+                    }
+                    trace.push(SearchIteration {
+                        iteration: 0,
+                        tool: "VECTOR".to_string(),
+                        reasoning: "Intent classifier selected vector search.".to_string(),
+                        query: Some(req.query.clone()),
+                        results_count: results.len() as i32,
+                        new_entries_added: results.len() as i32,
+                    });
+                }
+                Err(err) => {
+                    eprintln!("[llm] vector search embedding failed, falling back to recent: {err}");
+                }
+            }
+        }
+        BamlSearchOptions::RECENT => {}
+    }
+
+    if context.is_empty() {
+        let limit = req.top_k.unwrap_or(7).max(1) as usize;
+        let entries = db
+            .get_recent_entries(limit)
+            .await
+            .map_err(|err| err.to_string())?;
+        context.extend(entries.iter().map(|entry| entry_to_context(entry, None, "recent_entries")));
+        trace.push(SearchIteration {
+            iteration: 0,
+            tool: "RECENT".to_string(),
+            reasoning: "Intent classifier selected recent-entry retrieval or vector search was unavailable.".to_string(),
+            query: Some(req.query.clone()),
+            results_count: context.len() as i32,
+            new_entries_added: context.len() as i32,
+        });
+    }
+
+    Ok((context, trace))
+}
+
+fn response_metadata(
+    req: &ChatRequest,
+    context_entries: Vec<MessageContextEntry>,
+    retrieval_trace: Vec<SearchIteration>,
+) -> MessageMetadata {
+    MessageMetadata {
+        model: MessageModelMetadata {
+            provider: req.provider.clone(),
+            model: req.model.clone(),
+        },
+        personality: Some(MessagePersonalityMetadata {
+            title: None,
+            description: None,
+            prompt: None,
+        }),
+        context_entries,
+        context_chats: vec![],
+        retrieval_trace,
+    }
+}
+
+pub async fn generate_thread_title(messages: &[Message]) -> Result<String, String> {
+    if messages.is_empty() {
+        return Ok("Untitled".to_string());
+    }
+
+    let formatted = messages
+        .iter()
+        .map(|m| format!("[{}]: {}", m.role.to_uppercase(), m.content))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let title = B
+        .GenerateThreadTitle
+        .call(formatted.as_str())
+        .await
+        .map_err(|err| err.to_string())?
+        .trim()
+        .trim_matches(['\"', '\''])
+        .to_string();
+
+    Ok(if title.is_empty() {
+        "Untitled".to_string()
+    } else {
+        title
+    })
+}
+
+pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, String> {
+    let history = load_chat_history(db, &req).await?;
+    let mut messages = format_messages(&history, req.message_history.as_deref());
+    messages.push_str(&format!("\n\n[USER]: <QUERY>{}</QUERY>", req.query));
+
+    let (context_entries, trace) = initial_context(db, &req).await?;
+    let entries = format_entries(&context_entries);
+    let custom_instructions = load_custom_instructions();
+
+    let response = if let Some(client) = selected_client(&req) {
+        B.DirectChat
+            .with_client(client)
+            .call(
+                messages.as_str(),
+                entries.as_str(),
+                custom_instructions.as_str(),
+                DEFAULT_PERSONALITY_PROMPT,
+            )
+            .await
+    } else {
+        B.DirectChat
+            .call(
+                messages.as_str(),
+                entries.as_str(),
+                custom_instructions.as_str(),
+                DEFAULT_PERSONALITY_PROMPT,
+            )
+            .await
+    }
+    .map_err(|err| err.to_string())?;
+
+    Ok(ChatResponse {
+        response,
+        docs: docs_from_context(&context_entries),
+        thread_id: req.thread_id.clone(),
+        message_metadata: Some(response_metadata(&req, context_entries, trace)),
+    })
+}
+
+fn trace_to_string(trace: &[SearchIteration]) -> String {
+    trace
+        .iter()
+        .map(|step| {
+            format!(
+                "Iteration {}: tool={} query={:?} reasoning={} results={} new_entries={}",
+                step.iteration,
+                step.tool,
+                step.query,
+                step.reasoning,
+                step.results_count,
+                step.new_entries_added
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn tool_name(call: &SearchToolCall) -> String {
+    call.tool.to_string()
+}
+
+async fn execute_agent_tool(db: &Db, req: &ChatRequest, call: &SearchToolCall) -> Result<Vec<(Entry, Option<f64>)>, String> {
+    let limit = call.limit.unwrap_or(req.top_k.unwrap_or(DEFAULT_LIMIT as i32) as i64).max(1) as usize;
+
+    match call.tool {
+        SearchToolType::VECTOR_SEARCH => {
+            let query = call.query.as_deref().unwrap_or(req.query.as_str());
+            let embedding = get_embedding(query).await?;
+            let results = db
+                .get_similar_entries(embedding, limit)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(results
+                .into_iter()
+                .map(|(entry, distance)| (entry, Some(distance)))
+                .collect())
+        }
+        SearchToolType::RECENT_ENTRIES => {
+            let entries = db
+                .get_recent_entries(limit)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(entries.into_iter().map(|entry| (entry, None)).collect())
+        }
+        SearchToolType::DATE_RANGE_SEARCH => {
+            let start = call
+                .start_date
+                .clone()
+                .ok_or_else(|| "DATE_RANGE_SEARCH missing start_date".to_string())?;
+            let end = call
+                .end_date
+                .clone()
+                .ok_or_else(|| "DATE_RANGE_SEARCH missing end_date".to_string())?;
+            let entries = db
+                .get_entries_by_date_range(start, end, Some(limit))
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(entries.into_iter().map(|entry| (entry, None)).collect())
+        }
+        SearchToolType::DONE => Ok(vec![]),
+    }
+}
+
+pub async fn agent_chat<F>(mut emit: F, db: &Db, req: ChatRequest) -> Result<ChatResponse, String>
+where
+    F: FnMut(SearchIteration) -> Result<(), String>,
+{
+    let mut state = AgentSearchState::default();
+
+    let recent_entries = db
+        .get_recent_entries(RECENT_PRESEED_COUNT)
+        .await
+        .map_err(|err| err.to_string())?;
+    let new_count = state.add_entries(
+        recent_entries.into_iter().map(|entry| (entry, None)),
+        "recent_entries_preseed",
+    );
+    let step = state.record_iteration(
+        0,
+        "RECENT_ENTRIES_PRESEED",
+        "Always include recent entries for temporal context.",
+        None,
+        new_count as i32,
+        new_count as i32,
+    );
+    emit(step)?;
+
+    for iteration in 1..=MAX_AGENT_ITERATIONS {
+        let call = B
+            .AgentToolSelector
+            .call(
+                req.query.as_str(),
+                state.context_string().as_str(),
+                state.trace_string().as_str(),
+                iteration,
+                MAX_AGENT_ITERATIONS,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+
+        if matches!(call.tool, SearchToolType::DONE) {
+            let step = state.record_iteration(
+                iteration as i32,
+                tool_name(&call),
+                call.reasoning,
+                None,
+                0,
+                0,
+            );
+            emit(step)?;
+            break;
+        }
+
+        let source = tool_name(&call).to_lowercase();
+        let query_for_trace = call
+            .query
+            .clone()
+            .or_else(|| match (&call.start_date, &call.end_date) {
+                (Some(start), Some(end)) => Some(format!("{start}..{end}")),
+                _ => None,
+            });
+
+        let results = match execute_agent_tool(db, &req, &call).await {
+            Ok(results) => results,
+            Err(err) => {
+                eprintln!("[llm] agent tool {} failed: {err}", tool_name(&call));
+                vec![]
+            }
+        };
+        let results_count = results.len();
+        let new_count = state.add_entries(results, source);
+        let step = state.record_iteration(
+            iteration as i32,
+            tool_name(&call),
+            call.reasoning,
+            query_for_trace,
+            results_count as i32,
+            new_count as i32,
+        );
+        emit(step)?;
+    }
+
+    let history = load_chat_history(db, &req).await?;
+    let mut messages = format_messages(&history, req.message_history.as_deref());
+    messages.push_str(&format!("\n\n[USER]: <QUERY>{}</QUERY>", req.query));
+
+    let accumulated = state.context_string();
+    let search_trace = state.trace_string();
+    let custom_instructions = load_custom_instructions();
+
+    let response = if let Some(client) = selected_client(&req) {
+        B.AgentSynthesizer
+            .with_client(client)
+            .call(
+                req.query.as_str(),
+                messages.as_str(),
+                accumulated.as_str(),
+                search_trace.as_str(),
+                custom_instructions.as_str(),
+                DEFAULT_PERSONALITY_PROMPT,
+            )
+            .await
+    } else {
+        B.AgentSynthesizer
+            .call(
+                req.query.as_str(),
+                messages.as_str(),
+                accumulated.as_str(),
+                search_trace.as_str(),
+                custom_instructions.as_str(),
+                DEFAULT_PERSONALITY_PROMPT,
+            )
+            .await
+    }
+    .map_err(|err| err.to_string())?;
+
+    let context_entries = state.context_entries();
+    Ok(ChatResponse {
+        response,
+        docs: docs_from_context(&context_entries),
+        thread_id: req.thread_id.clone(),
+        message_metadata: Some(response_metadata(&req, context_entries, state.search_trace)),
+    })
+}

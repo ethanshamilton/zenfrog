@@ -1,4 +1,6 @@
+mod baml_client;
 mod db;
+mod llm;
 mod models;
 
 use std::{path::PathBuf, sync::Mutex};
@@ -71,13 +73,8 @@ async fn get_status(status: State<'_, Mutex<AppStatus>>) -> Result<StatusRespons
 }
 
 #[tauri::command]
-async fn journal_chat(req: ChatRequest) -> Result<ChatResponse, String> {
-    Ok(ChatResponse {
-        response: "This is a mocked Tauri chat response.".to_string(),
-        docs: vec![],
-        thread_id: req.thread_id,
-        message_metadata: None,
-    })
+async fn journal_chat(state: State<'_, DbState>, req: ChatRequest) -> Result<ChatResponse, String> {
+    llm::direct_chat(&state.db, req).await
 }
 
 #[tauri::command]
@@ -208,11 +205,17 @@ async fn update_thread_title(
 }
 
 #[tauri::command]
-async fn generate_thread_title(thread_id: String) -> Result<GenerateThreadTitleResponse, String> {
-    let _ = thread_id;
-    Ok(GenerateThreadTitleResponse {
-        title: "Mock thread title".to_string(),
-    })
+async fn generate_thread_title(
+    state: State<'_, DbState>,
+    thread_id: String,
+) -> Result<GenerateThreadTitleResponse, String> {
+    let messages = state
+        .db
+        .get_thread_messages(thread_id)
+        .await
+        .map_err(|err| err.to_string())?;
+    let title = llm::generate_thread_title(&messages).await?;
+    Ok(GenerateThreadTitleResponse { title })
 }
 
 #[tauri::command]
@@ -226,30 +229,32 @@ async fn delete_thread(state: State<'_, DbState>, thread_id: String) -> Result<(
 
 #[tauri::command]
 async fn journal_chat_agent_stream(
+    state: State<'_, DbState>,
     req: ChatRequest,
     on_event: Channel<StreamEvent>,
 ) -> Result<(), String> {
-    on_event
-        .send(StreamEvent::SearchIteration(SearchIteration {
-            iteration: 1,
-            tool: "mock_search".to_string(),
-            reasoning: "Validating Tauri channel wiring with a fake search iteration.".to_string(),
-            query: Some(req.query.clone()),
-            results_count: 0,
-            new_entries_added: 0,
-        }))
-        .map_err(|err| err.to_string())?;
+    let response = llm::agent_chat(
+        |step| {
+            on_event
+                .send(StreamEvent::SearchIteration(step))
+                .map_err(|err| err.to_string())
+        },
+        &state.db,
+        req,
+    )
+    .await;
 
-    on_event
-        .send(StreamEvent::ChatResponse(ChatResponse {
-            response: "This is a mocked Tauri chat response.".to_string(),
-            docs: vec![],
-            thread_id: req.thread_id,
-            message_metadata: None,
-        }))
-        .map_err(|err| err.to_string())?;
-
-    Ok(())
+    match response {
+        Ok(response) => on_event
+            .send(StreamEvent::ChatResponse(response))
+            .map_err(|err| err.to_string()),
+        Err(error) => {
+            let _ = on_event.send(StreamEvent::Error {
+                error: error.clone(),
+            });
+            Err(error)
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

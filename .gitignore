@@ -13,6 +13,7 @@ dist-ssr
 *.local
 *.data
 .env
+*baml_client
 
 # Editor directories and files
 .vscode/*

@@ -15,6 +15,31 @@ struct DbState {
     db: Db,
 }
 
+fn load_dotenv() {
+    let cwd = std::env::current_dir().ok();
+    let candidates = [
+        cwd.as_ref().map(|dir| dir.join(".env")),
+        cwd.as_ref().map(|dir| dir.join("src-tauri/.env")),
+        cwd.as_ref()
+            .and_then(|dir| dir.parent().map(|parent| parent.join(".env"))),
+    ];
+
+    for path in candidates.into_iter().flatten() {
+        if path.exists() {
+            let _ = dotenvy::from_path(path);
+            return;
+        }
+    }
+
+    let _ = dotenvy::dotenv();
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 fn resolve_db_config(app: &tauri::App) -> Result<DbConfig, String> {
     let lance_path: PathBuf = if cfg!(debug_assertions) {
         std::env::current_dir()
@@ -30,13 +55,12 @@ fn resolve_db_config(app: &tauri::App) -> Result<DbConfig, String> {
 
     Ok(DbConfig {
         lance_path,
-        journal_dir: None,
-        evergreen_dir: None,
-        embeddings_path: None,
-        chats_path: None,
+        journal_dir: env_path("ZENFROG_JOURNAL_DIR"),
+        evergreen_dir: env_path("ZENFROG_EVERGREEN_DIR"),
+        embeddings_path: env_path("ZENFROG_EMBEDDINGS_PATH"),
+        chats_path: env_path("ZENFROG_CHATS_PATH"),
     })
 }
-
 
 #[tauri::command]
 async fn get_status(status: State<'_, Mutex<AppStatus>>) -> Result<StatusResponse, String> {
@@ -54,6 +78,64 @@ async fn journal_chat(req: ChatRequest) -> Result<ChatResponse, String> {
         thread_id: req.thread_id,
         message_metadata: None,
     })
+}
+
+#[tauri::command]
+async fn get_recent_entries(
+    state: State<'_, DbState>,
+    n: Option<usize>,
+) -> Result<Vec<Entry>, String> {
+    state
+        .db
+        .get_recent_entries(n.unwrap_or(7))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn vector_search_entries(
+    state: State<'_, DbState>,
+    embedding: Vec<f64>,
+    n: Option<usize>,
+) -> Result<Vec<RetrievedDoc>, String> {
+    let results = state
+        .db
+        .get_similar_entries(embedding, n.unwrap_or(5))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(results
+        .into_iter()
+        .map(|(entry, distance)| RetrievedDoc {
+            entry: Entry {
+                embedding: None,
+                ..entry
+            },
+            distance: Some(distance),
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn get_entries_by_date_range(
+    state: State<'_, DbState>,
+    start_date: String,
+    end_date: String,
+    n: Option<usize>,
+) -> Result<Vec<Entry>, String> {
+    state
+        .db
+        .get_entries_by_date_range(start_date, end_date, n)
+        .await
+        .map(|entries| {
+            entries
+                .into_iter()
+                .map(|entry| Entry {
+                    embedding: None,
+                    ..entry
+                })
+                .collect()
+        })
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -172,6 +254,8 @@ async fn journal_chat_agent_stream(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    load_dotenv();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -197,6 +281,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             journal_chat,
+            get_recent_entries,
+            vector_search_entries,
+            get_entries_by_date_range,
             create_thread,
             get_threads,
             get_thread,

@@ -39,10 +39,13 @@ pub struct MessagePersonalityMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageContextEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_id: Option<String>,
     pub date: Option<String>,
     pub title: String,
     pub entry_type: String,
-    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     pub tags: Vec<String>,
     pub distance: Option<f64>,
     pub source: String,
@@ -78,6 +81,8 @@ pub struct MessageMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
+    #[serde(default)]
+    pub entry_id: String,
     pub date: String,
     pub title: String,
     pub text: String,

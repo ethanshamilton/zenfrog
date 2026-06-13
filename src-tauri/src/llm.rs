@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 use serde_json::json;
@@ -15,7 +19,6 @@ use crate::{
     },
 };
 
-const DEFAULT_PERSONALITY_PROMPT: &str = "";
 const MAX_AGENT_ITERATIONS: i64 = 5;
 const RECENT_PRESEED_COUNT: usize = 4;
 const DEFAULT_LIMIT: usize = 5;
@@ -39,6 +42,13 @@ struct RetrievedEntry {
     source: String,
 }
 
+#[derive(Debug, Clone)]
+struct Personality {
+    title: String,
+    description: String,
+    prompt: String,
+}
+
 #[derive(Debug, Default)]
 struct AgentSearchState {
     entries: HashMap<String, RetrievedEntry>,
@@ -48,10 +58,19 @@ struct AgentSearchState {
 
 impl AgentSearchState {
     fn key(entry: &Entry) -> String {
-        format!("{}::{}::{}", entry.date, entry.title, entry.entry_type)
+        if entry.entry_id.is_empty() {
+            format!("{}::{}::{}", entry.date, entry.title, entry.entry_type)
+        } else {
+            entry.entry_id.clone()
+        }
     }
 
-    fn add_entry(&mut self, entry: Entry, distance: Option<f64>, source: impl Into<String>) -> bool {
+    fn add_entry(
+        &mut self,
+        entry: Entry,
+        distance: Option<f64>,
+        source: impl Into<String>,
+    ) -> bool {
         let key = Self::key(&entry);
         if self.entries.contains_key(&key) {
             return false;
@@ -103,7 +122,9 @@ impl AgentSearchState {
         self.ordered_keys
             .iter()
             .filter_map(|key| self.entries.get(key))
-            .map(|retrieved| entry_to_context(&retrieved.entry, retrieved.distance, &retrieved.source))
+            .map(|retrieved| {
+                entry_to_context(&retrieved.entry, retrieved.distance, &retrieved.source)
+            })
             .collect()
     }
 
@@ -121,7 +142,7 @@ impl AgentSearchState {
                 entry.entry_type,
                 entry.source,
                 entry.tags.join(", "),
-                entry.text
+                entry.text.as_deref().unwrap_or("")
             );
             total += block.len();
             if total > MAX_CONTEXT_CHARS {
@@ -155,6 +176,131 @@ pub fn load_custom_instructions() -> String {
         .and_then(|path| fs::read_to_string(path).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+fn personality_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("ZENFROG_PERSONALITY_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return Some(path);
+    }
+
+    std::env::var_os("ZENFROG_JOURNAL_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .and_then(|path| path.parent().map(|parent| parent.join("Personalities")))
+}
+
+fn split_frontmatter(text: &str) -> (HashMap<String, String>, String) {
+    if !text.starts_with("---") {
+        return (HashMap::new(), text.to_string());
+    }
+
+    let mut lines = text.lines();
+    let _ = lines.next();
+    let mut frontmatter = HashMap::new();
+    let mut body_lines = Vec::new();
+    let mut in_frontmatter = true;
+
+    for line in lines {
+        if in_frontmatter && line.trim() == "---" {
+            in_frontmatter = false;
+            continue;
+        }
+
+        if in_frontmatter {
+            if let Some((key, value)) = line.split_once(':') {
+                frontmatter.insert(
+                    key.trim().to_string(),
+                    value.trim().trim_matches(['\"', '\'']).to_string(),
+                );
+            }
+        } else {
+            body_lines.push(line);
+        }
+    }
+
+    if in_frontmatter {
+        (HashMap::new(), text.to_string())
+    } else {
+        (frontmatter, body_lines.join("\n"))
+    }
+}
+
+fn load_personalities() -> Vec<Personality> {
+    let Some(dir) = personality_dir() else {
+        return vec![];
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        eprintln!(
+            "[llm] personality directory not found/readable: {}",
+            dir.display()
+        );
+        return vec![];
+    };
+
+    let mut paths = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    paths
+        .into_iter()
+        .filter_map(|path| load_personality_file(&path))
+        .collect()
+}
+
+fn load_personality_file(path: &Path) -> Option<Personality> {
+    let content = fs::read_to_string(path)
+        .map_err(|err| {
+            eprintln!("[llm] failed to read personality {}: {err}", path.display());
+            err
+        })
+        .ok()?;
+    let (frontmatter, body) = split_frontmatter(&content);
+    let description = frontmatter.get("description")?.trim().to_string();
+    let prompt = body.trim().to_string();
+
+    if description.is_empty() || prompt.is_empty() {
+        eprintln!(
+            "[llm] skipping personality missing description or body: {}",
+            path.display()
+        );
+        return None;
+    }
+
+    Some(Personality {
+        title: path.file_stem()?.to_string_lossy().to_string(),
+        description,
+        prompt,
+    })
+}
+
+async fn classify_personality(query: &str) -> Option<Personality> {
+    let personalities = load_personalities();
+    if personalities.is_empty() {
+        return None;
+    }
+
+    let options = personalities
+        .iter()
+        .map(|p| format!("- {}: {}", p.title, p.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let selected = B
+        .PersonalityClassifier
+        .call(query, options.as_str())
+        .await
+        .ok()?
+        .trim()
+        .to_string();
+
+    personalities
+        .into_iter()
+        .find(|p| p.title.eq_ignore_ascii_case(&selected))
 }
 
 async fn get_embedding(text: &str) -> Result<Vec<f64>, String> {
@@ -193,7 +339,11 @@ async fn get_embedding(text: &str) -> Result<Vec<f64>, String> {
     parsed
         .embedding
         .map(|embedding| embedding.values)
-        .or_else(|| parsed.embeddings.and_then(|mut embeddings| embeddings.pop().map(|e| e.values)))
+        .or_else(|| {
+            parsed
+                .embeddings
+                .and_then(|mut embeddings| embeddings.pop().map(|e| e.values))
+        })
         .filter(|values| !values.is_empty())
         .ok_or_else(|| "embedding API returned no values".to_string())
 }
@@ -241,10 +391,15 @@ fn format_messages(messages: &[Message], request_history: Option<&[serde_json::V
 
 fn entry_to_context(entry: &Entry, distance: Option<f64>, source: &str) -> MessageContextEntry {
     MessageContextEntry {
+        entry_id: if entry.entry_id.is_empty() {
+            None
+        } else {
+            Some(entry.entry_id.clone())
+        },
         date: Some(entry.date.clone()),
         title: entry.title.clone(),
         entry_type: entry.entry_type.clone(),
-        text: entry.text.clone(),
+        text: Some(entry.text.clone()),
         tags: entry.tags.clone(),
         distance,
         source: source.to_string(),
@@ -264,7 +419,7 @@ fn format_entries(entries: &[MessageContextEntry]) -> String {
                 entry.entry_type,
                 entry.source,
                 entry.tags.join(", "),
-                entry.text
+                entry.text.as_deref().unwrap_or("")
             )
         })
         .collect::<Vec<_>>()
@@ -276,9 +431,10 @@ fn docs_from_context(entries: &[MessageContextEntry]) -> Vec<RetrievedDoc> {
         .iter()
         .map(|ctx| RetrievedDoc {
             entry: Entry {
+                entry_id: ctx.entry_id.clone().unwrap_or_default(),
                 date: ctx.date.clone().unwrap_or_default(),
                 title: ctx.title.clone(),
-                text: ctx.text.clone(),
+                text: ctx.text.clone().unwrap_or_default(),
                 tags: ctx.tags.clone(),
                 embedding: None,
                 entry_type: ctx.entry_type.clone(),
@@ -298,7 +454,10 @@ async fn load_chat_history(db: &Db, req: &ChatRequest) -> Result<Vec<Message>, S
     }
 }
 
-async fn initial_context(db: &Db, req: &ChatRequest) -> Result<(Vec<MessageContextEntry>, Vec<SearchIteration>), String> {
+async fn initial_context(
+    db: &Db,
+    req: &ChatRequest,
+) -> Result<(Vec<MessageContextEntry>, Vec<SearchIteration>), String> {
     let mut context = Vec::new();
     let mut trace = Vec::new();
 
@@ -356,7 +515,9 @@ async fn initial_context(db: &Db, req: &ChatRequest) -> Result<(Vec<MessageConte
                     });
                 }
                 Err(err) => {
-                    eprintln!("[llm] vector search embedding failed, falling back to recent: {err}");
+                    eprintln!(
+                        "[llm] vector search embedding failed, falling back to recent: {err}"
+                    );
                 }
             }
         }
@@ -369,7 +530,11 @@ async fn initial_context(db: &Db, req: &ChatRequest) -> Result<(Vec<MessageConte
             .get_recent_entries(limit)
             .await
             .map_err(|err| err.to_string())?;
-        context.extend(entries.iter().map(|entry| entry_to_context(entry, None, "recent_entries")));
+        context.extend(
+            entries
+                .iter()
+                .map(|entry| entry_to_context(entry, None, "recent_entries")),
+        );
         trace.push(SearchIteration {
             iteration: 0,
             tool: "RECENT".to_string(),
@@ -385,6 +550,7 @@ async fn initial_context(db: &Db, req: &ChatRequest) -> Result<(Vec<MessageConte
 
 fn response_metadata(
     req: &ChatRequest,
+    personality: Option<&Personality>,
     context_entries: Vec<MessageContextEntry>,
     retrieval_trace: Vec<SearchIteration>,
 ) -> MessageMetadata {
@@ -393,10 +559,10 @@ fn response_metadata(
             provider: req.provider.clone(),
             model: req.model.clone(),
         },
-        personality: Some(MessagePersonalityMetadata {
-            title: None,
-            description: None,
-            prompt: None,
+        personality: personality.map(|p| MessagePersonalityMetadata {
+            title: Some(p.title.clone()),
+            description: Some(p.description.clone()),
+            prompt: Some(p.prompt.clone()),
         }),
         context_entries,
         context_chats: vec![],
@@ -438,6 +604,11 @@ pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, Stri
     let (context_entries, trace) = initial_context(db, &req).await?;
     let entries = format_entries(&context_entries);
     let custom_instructions = load_custom_instructions();
+    let personality = classify_personality(&req.query).await;
+    let personality_prompt = personality
+        .as_ref()
+        .map(|p| p.prompt.as_str())
+        .unwrap_or_default();
 
     let response = if let Some(client) = selected_client(&req) {
         B.DirectChat
@@ -446,7 +617,7 @@ pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, Stri
                 messages.as_str(),
                 entries.as_str(),
                 custom_instructions.as_str(),
-                DEFAULT_PERSONALITY_PROMPT,
+                personality_prompt,
             )
             .await
     } else {
@@ -455,7 +626,7 @@ pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, Stri
                 messages.as_str(),
                 entries.as_str(),
                 custom_instructions.as_str(),
-                DEFAULT_PERSONALITY_PROMPT,
+                personality_prompt,
             )
             .await
     }
@@ -465,7 +636,12 @@ pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, Stri
         response,
         docs: docs_from_context(&context_entries),
         thread_id: req.thread_id.clone(),
-        message_metadata: Some(response_metadata(&req, context_entries, trace)),
+        message_metadata: Some(response_metadata(
+            &req,
+            personality.as_ref(),
+            context_entries,
+            trace,
+        )),
     })
 }
 
@@ -491,8 +667,15 @@ fn tool_name(call: &SearchToolCall) -> String {
     call.tool.to_string()
 }
 
-async fn execute_agent_tool(db: &Db, req: &ChatRequest, call: &SearchToolCall) -> Result<Vec<(Entry, Option<f64>)>, String> {
-    let limit = call.limit.unwrap_or(req.top_k.unwrap_or(DEFAULT_LIMIT as i32) as i64).max(1) as usize;
+async fn execute_agent_tool(
+    db: &Db,
+    req: &ChatRequest,
+    call: &SearchToolCall,
+) -> Result<Vec<(Entry, Option<f64>)>, String> {
+    let limit = call
+        .limit
+        .unwrap_or(req.top_k.unwrap_or(DEFAULT_LIMIT as i32) as i64)
+        .max(1) as usize;
 
     match call.tool {
         SearchToolType::VECTOR_SEARCH => {
@@ -584,13 +767,13 @@ where
         }
 
         let source = tool_name(&call).to_lowercase();
-        let query_for_trace = call
-            .query
-            .clone()
-            .or_else(|| match (&call.start_date, &call.end_date) {
-                (Some(start), Some(end)) => Some(format!("{start}..{end}")),
-                _ => None,
-            });
+        let query_for_trace =
+            call.query
+                .clone()
+                .or_else(|| match (&call.start_date, &call.end_date) {
+                    (Some(start), Some(end)) => Some(format!("{start}..{end}")),
+                    _ => None,
+                });
 
         let results = match execute_agent_tool(db, &req, &call).await {
             Ok(results) => results,
@@ -619,6 +802,11 @@ where
     let accumulated = state.context_string();
     let search_trace = state.trace_string();
     let custom_instructions = load_custom_instructions();
+    let personality = classify_personality(&req.query).await;
+    let personality_prompt = personality
+        .as_ref()
+        .map(|p| p.prompt.as_str())
+        .unwrap_or_default();
 
     let response = if let Some(client) = selected_client(&req) {
         B.AgentSynthesizer
@@ -629,7 +817,7 @@ where
                 accumulated.as_str(),
                 search_trace.as_str(),
                 custom_instructions.as_str(),
-                DEFAULT_PERSONALITY_PROMPT,
+                personality_prompt,
             )
             .await
     } else {
@@ -640,7 +828,7 @@ where
                 accumulated.as_str(),
                 search_trace.as_str(),
                 custom_instructions.as_str(),
-                DEFAULT_PERSONALITY_PROMPT,
+                personality_prompt,
             )
             .await
     }
@@ -651,6 +839,11 @@ where
         response,
         docs: docs_from_context(&context_entries),
         thread_id: req.thread_id.clone(),
-        message_metadata: Some(response_metadata(&req, context_entries, state.search_trace)),
+        message_metadata: Some(response_metadata(
+            &req,
+            personality.as_ref(),
+            context_entries,
+            state.search_trace,
+        )),
     })
 }

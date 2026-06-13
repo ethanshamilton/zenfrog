@@ -97,9 +97,14 @@ const MessageMetadataView = ({ metadata, onFlipBack }: { metadata: MessageMetada
             <div className="metadata-entry-meta">
               <span>{entry.entry_type}</span>
               <span>{entry.source}</span>
+              {entry.entry_id && <span>{entry.entry_id}</span>}
               {entry.tags.length > 0 && <span>{entry.tags.join(' ')}</span>}
             </div>
-            <pre>{entry.text}</pre>
+            {entry.text ? (
+              <pre>{entry.text}</pre>
+            ) : (
+              <div className="metadata-muted">Stored by journal entry reference.</div>
+            )}
           </details>
         ))}
       </section>

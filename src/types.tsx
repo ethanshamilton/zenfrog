@@ -33,10 +33,11 @@ export interface MessagePersonalityMetadata {
 }
 
 export interface MessageContextEntry {
+    entry_id?: string | null
     date: string | null
     title: string
     entry_type: string
-    text: string
+    text?: string | null
     tags: string[]
     distance: number | null
     source: string

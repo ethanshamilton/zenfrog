@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 import type { Thread, ThreadMessage, SearchIteration, MessageMetadata, Document as JournalDocument } from '../types'
 
 export interface Entry {
+  entry_id: string
   date: string
   title: string
   text: string

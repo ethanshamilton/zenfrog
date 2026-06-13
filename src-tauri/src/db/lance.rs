@@ -236,7 +236,7 @@ impl Db {
             timestamp: Utc::now().to_rfc3339(),
             role,
             content,
-            metadata,
+            metadata: metadata.map(compact_message_metadata),
         };
 
         let table = self.conn.open_table("messages").execute().await?;
@@ -590,6 +590,15 @@ fn thread_batch(threads: &[Thread]) -> DbResult<Box<dyn arrow_array::RecordBatch
     Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
 }
 
+fn compact_message_metadata(mut metadata: MessageMetadata) -> MessageMetadata {
+    for entry in &mut metadata.context_entries {
+        if entry.entry_id.is_some() {
+            entry.text = None;
+        }
+    }
+    metadata
+}
+
 fn message_batch(messages: &[Message]) -> DbResult<Box<dyn arrow_array::RecordBatchReader + Send>> {
     let schema = message_schema();
     let metadata_json = messages
@@ -714,6 +723,7 @@ fn entries_from_batches(
 ) -> DbResult<Vec<(Entry, Option<f64>)>> {
     let mut entries = Vec::new();
     for batch in batches {
+        let entry_ids = string_column(batch, "entry_id")?;
         let dates = string_column(batch, "date")?;
         let titles = string_column(batch, "title")?;
         let texts = string_column(batch, "text")?;
@@ -729,6 +739,7 @@ fn entries_from_batches(
         for i in 0..batch.num_rows() {
             entries.push((
                 Entry {
+                    entry_id: string_value(entry_ids, i),
                     date: string_value(dates, i),
                     title: string_value(titles, i),
                     text: string_value(texts, i),

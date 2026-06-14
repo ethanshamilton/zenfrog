@@ -42,6 +42,7 @@ interface ChatInterfaceProps {
   threadId?: string
   initialMessage?: string
   autoSend?: boolean
+  launchId?: string
 }
 
 const WELCOME_MESSAGE = "Hello! I'm here to help you search through your documents. What would you like to know?"
@@ -187,7 +188,7 @@ const ChatMessageCard = ({ message }: { message: Message }) => {
   )
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, threadId, initialMessage, autoSend }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, threadId, initialMessage, autoSend, launchId }) => {
 
   const [selectedModel, setSelectedModel] = useState({
     provider: "anthropic",
@@ -201,6 +202,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, threadId, i
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null)
   const [isThreadSaved, setIsThreadSaved] = useState(false)
   const [searchIterations, setSearchIterations] = useState<SearchIteration[]>([])
+  const handledLaunchIdsRef = useRef<Set<string>>(new Set())
   const handledInitialMessageRef = useRef<string | null>(null)
 
   const loadThread = (threadId: string, threadMessages: ThreadMessage[]) => {
@@ -349,16 +351,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, threadId, i
   useEffect(() => {
     if (!initialMessage) return
 
-    const initialMessageKey = `${threadId ?? 'new'}:${initialMessage}:${autoSend ? 'send' : 'draft'}`
-    if (handledInitialMessageRef.current === initialMessageKey) return
-    handledInitialMessageRef.current = initialMessageKey
+    if (launchId) {
+      if (handledLaunchIdsRef.current.has(launchId)) return
+      handledLaunchIdsRef.current.add(launchId)
+    } else {
+      const initialMessageKey = `${threadId ?? 'new'}:${initialMessage}:${autoSend ? 'send' : 'draft'}`
+      if (handledInitialMessageRef.current === initialMessageKey) return
+      handledInitialMessageRef.current = initialMessageKey
+    }
 
     if (autoSend) {
       void sendMessage(initialMessage)
     } else {
       setInputText(initialMessage)
     }
-  }, [threadId, initialMessage, autoSend])
+  }, [threadId, initialMessage, autoSend, launchId])
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

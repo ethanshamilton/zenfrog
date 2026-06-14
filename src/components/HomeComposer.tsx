@@ -7,7 +7,7 @@ interface HomeComposerProps {
   tagSuggestions: TagSummary[]
   onTagsCreated: (tags: string[]) => void
   onLogCreated: () => void
-  onOpenChat: () => void
+  onOpenChat: (initialMessage: string) => void
 }
 
 const MAX_TEXTAREA_HEIGHT = 160
@@ -87,6 +87,7 @@ const HomeComposer = ({
   const dateTimePickerRef = useRef<HTMLDivElement>(null)
 
   const parsedInput = parseLogInput(composerText)
+  const chatMessage = composerText.trim()
   const activeTagToken = findActiveTagToken(composerText, caretIndex)
   const matchingTagSuggestions = activeTagToken
     ? tagSuggestions
@@ -97,6 +98,7 @@ const HomeComposer = ({
         .slice(0, 8)
     : []
   const canSubmitLog = parsedInput.text.length > 0 && !submitting
+  const canSubmitChat = chatMessage.length > 0 && !submitting
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -131,6 +133,15 @@ const HomeComposer = ({
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`
   }, [composerText])
+
+  const submitChat = () => {
+    const message = composerText.trim()
+    if (!message || submitting) return
+
+    setComposerText('')
+    setCaretIndex(0)
+    onOpenChat(message)
+  }
 
   const submitLog = async () => {
     const { text, tags } = parseLogInput(composerText)
@@ -194,9 +205,12 @@ const HomeComposer = ({
         return
       }
 
-      if (event.key === 'Tab' || event.key === 'Enter') {
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.ctrlKey && !event.metaKey)) {
         event.preventDefault()
-        acceptTagSuggestion(matchingTagSuggestions[selectedSuggestionIndex]?.tag)
+        const selectedSuggestion = matchingTagSuggestions[selectedSuggestionIndex]
+        if (selectedSuggestion) {
+          acceptTagSuggestion(selectedSuggestion.tag)
+        }
         return
       }
 
@@ -211,7 +225,7 @@ const HomeComposer = ({
 
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault()
-      onOpenChat()
+      submitChat()
       return
     }
 
@@ -377,7 +391,7 @@ const HomeComposer = ({
           <button onClick={() => void submitLog()} disabled={!canSubmitLog}>
             [Log]
           </button>
-          <button onClick={onOpenChat} disabled={submitting}>
+          <button onClick={submitChat} disabled={!canSubmitChat}>
             [Chat]
           </button>
         </div>

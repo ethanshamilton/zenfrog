@@ -7,8 +7,15 @@ import { apiService, type Entry, type LogEvent } from '../services/api'
 import type { Thread } from '../types'
 import './HomePage.css'
 
+interface OpenChatOptions {
+  threadId?: string
+  initialMessage?: string
+  autoSend?: boolean
+  launchId?: string
+}
+
 interface HomePageProps {
-  onOpenChat: (threadId?: string) => void
+  onOpenChat: (options?: OpenChatOptions) => void
   onOpenLogs: (focusedLogEventId?: string) => void
   onOpenSettings: () => void
 }
@@ -115,7 +122,7 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
           onRefresh={threadsList.refresh}
           getItemKey={(thread) => thread.thread_id}
           renderItem={(thread) => (
-            <button className="home-list-item" onClick={() => onOpenChat(thread.thread_id)}>
+            <button className="home-list-item" onClick={() => onOpenChat({ threadId: thread.thread_id })}>
               <span>{thread.title}</span>
               <small>
                 Updated {formatDate(thread.updated_at)}
@@ -169,7 +176,11 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
           logsList.refresh()
           tagTaxonomy.refresh()
         }}
-        onOpenChat={() => onOpenChat()}
+        onOpenChat={(initialMessage) => onOpenChat({
+          initialMessage,
+          autoSend: true,
+          launchId: crypto.randomUUID(),
+        })}
       />
     </main>
   )

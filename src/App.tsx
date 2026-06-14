@@ -10,7 +10,7 @@ import type { Document } from './types'
 
 export type AppPage =
   | { name: 'home' }
-  | { name: 'chat'; threadId?: string; initialMessage?: string; autoSend?: boolean }
+  | { name: 'chat'; threadId?: string; initialMessage?: string; autoSend?: boolean; launchId?: string }
   | { name: 'logs'; focusedLogEventId?: string }
   | { name: 'settings' }
 
@@ -63,7 +63,7 @@ function App() {
       case 'home':
         return (
           <HomePage
-            onOpenChat={(threadId) => setPage({ name: 'chat', threadId })}
+            onOpenChat={(chatPage = {}) => setPage({ name: 'chat', ...chatPage })}
             onOpenLogs={(focusedLogEventId) => setPage({ name: 'logs', focusedLogEventId })}
             onOpenSettings={() => setPage({ name: 'settings' })}
           />
@@ -81,6 +81,7 @@ function App() {
               threadId={page.threadId}
               initialMessage={page.initialMessage}
               autoSend={page.autoSend}
+              launchId={page.launchId}
             />
           </div>
         )

@@ -33,8 +33,7 @@
   padding-right: 44px;
 }
 
-.home-panel-header p,
-.home-composer-label {
+.home-panel-header p {
   margin: 0 0 0.35rem;
   color: #ff8800;
   font-size: 0.75rem;
@@ -124,65 +123,6 @@ button.home-list-item:hover {
   white-space: pre-wrap;
 }
 
-.home-composer {
-  flex: 0 0 auto;
-  padding: 1rem;
-  background: black;
-}
-
-.home-composer-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: flex-end;
-}
-
-.home-terminal-input {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  border: 1px solid #333;
-  border-left: 2px solid #ae5d00;
-  border-radius: 4px;
-  background: #050505;
-  color: white;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  cursor: text;
-}
-
-.home-terminal-input:focus-within {
-  border-color: #ff8800;
-}
-
-.home-terminal-prompt {
-  flex: 0 0 auto;
-  color: #ff8800;
-  line-height: 1.4;
-  user-select: none;
-}
-
-.home-terminal-input textarea {
-  flex: 1;
-  min-width: 0;
-  min-height: 1.4em;
-  resize: none;
-  overflow: hidden;
-  border: none;
-  padding: 0;
-  background: transparent;
-  color: white;
-  font: inherit;
-  line-height: 1.4;
-  outline: none;
-}
-
-.home-terminal-input textarea::placeholder {
-  color: #666;
-}
-
-.home-composer-row button,
 .home-settings-button {
   border: none;
   background: #ae5d00;
@@ -191,11 +131,6 @@ button.home-list-item:hover {
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.2s ease;
-}
-
-.home-composer-row button {
-  border-radius: 8px;
-  padding: 0.75rem 1.5rem;
 }
 
 .home-settings-button {
@@ -212,7 +147,6 @@ button.home-list-item:hover {
   font-size: 1rem;
 }
 
-.home-composer-row button:hover,
 .home-settings-button:hover {
   background: #ff8800;
 }
@@ -227,8 +161,4 @@ button.home-list-item:hover {
     border-bottom: 1px solid #ccc;
   }
 
-  .home-composer-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
 }

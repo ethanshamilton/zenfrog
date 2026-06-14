@@ -1,0 +1,233 @@
+.home-composer {
+  flex: 0 0 auto;
+  padding: 1rem;
+  background: black;
+}
+
+.home-composer-label {
+  margin: 0 0 0.35rem;
+  color: #ff8800;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.home-composer-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.home-terminal-input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 4px;
+  background: #050505;
+  color: white;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  cursor: text;
+}
+
+.home-terminal-input:focus-within {
+  border-color: #ff8800;
+}
+
+.home-terminal-prompt-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.home-terminal-prompt {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: #ff8800;
+  font: inherit;
+  line-height: 1.4;
+  user-select: none;
+  cursor: pointer;
+}
+
+.home-terminal-prompt:hover {
+  color: #ffb15c;
+}
+
+.home-datetime-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 20;
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  padding: 0.75rem;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 6px;
+  background: #050505;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.home-datetime-popover label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: #888;
+  font-size: 0.75rem;
+}
+
+.home-datetime-popover input {
+  box-sizing: border-box;
+  height: 2rem;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.35rem;
+  background: black;
+  color: white;
+  font: inherit;
+  color-scheme: dark;
+}
+
+.home-time-fields {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 2rem;
+  color: #ff8800;
+}
+
+.home-time-fields input {
+  width: 2.6rem;
+  text-align: center;
+}
+
+.home-datetime-popover button {
+  border: none;
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+  background: #2a2a2a;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+
+.home-datetime-popover button:hover {
+  background: #ff8800;
+}
+
+.home-terminal-input textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.4em;
+  max-height: 160px;
+  resize: none;
+  overflow-y: auto;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: white;
+  font: inherit;
+  line-height: 1.4;
+  outline: none;
+}
+
+.home-terminal-input textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.home-terminal-input textarea::placeholder {
+  color: #666;
+}
+
+.home-tag-suggestions {
+  position: absolute;
+  left: 0.75rem;
+  bottom: calc(100% + 8px);
+  z-index: 15;
+  min-width: 220px;
+  max-width: min(420px, calc(100vw - 2rem));
+  overflow: hidden;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 6px;
+  background: #050505;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.home-tag-suggestions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  border: none;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  color: white;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-tag-suggestions button:hover,
+.home-tag-suggestions button.active {
+  background: #2a2a2a;
+  color: #ff8800;
+}
+
+.home-tag-suggestions small {
+  color: #888;
+}
+
+.home-composer-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.home-composer-actions button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: #ae5d00;
+  color: white;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
+.home-composer-actions button:hover:not(:disabled) {
+  background: #ff8800;
+}
+
+.home-composer-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.home-composer-error {
+  margin-top: 0.5rem;
+  color: #ffb15c;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 760px) {
+  .home-composer-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .home-composer-actions {
+    justify-content: flex-end;
+  }
+}

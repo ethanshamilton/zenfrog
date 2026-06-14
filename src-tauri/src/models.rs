@@ -101,6 +101,12 @@ pub struct LogEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagSummary {
+    pub tag: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievedDoc {
     pub entry: Entry,
     pub distance: Option<f64>,

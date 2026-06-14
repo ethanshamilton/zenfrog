@@ -94,6 +94,11 @@ async fn get_recent_entries(
 }
 
 #[tauri::command]
+async fn list_tags(state: State<'_, DbState>) -> Result<Vec<TagSummary>, String> {
+    state.db.list_tags().await.map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn vector_search_entries(
     state: State<'_, DbState>,
     embedding: Vec<f64>,
@@ -319,6 +324,7 @@ pub fn run() {
             get_status,
             journal_chat,
             get_recent_entries,
+            list_tags,
             vector_search_entries,
             get_entries_by_date_range,
             create_thread,

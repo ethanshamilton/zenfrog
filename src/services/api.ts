@@ -26,6 +26,11 @@ export interface LogEvent extends CreateLogEventInput {
   log_event_id: string
 }
 
+export interface TagSummary {
+  tag: string
+  count: number
+}
+
 export type LogEventOrder = 'ascending' | 'descending'
 
 export interface ChatRequest {
@@ -114,6 +119,10 @@ export const apiService = {
 
   async getRecentEntries(n?: number): Promise<Entry[]> {
     return invoke('get_recent_entries', { n })
+  },
+
+  async listTags(): Promise<TagSummary[]> {
+    return invoke('list_tags')
   },
 
   async createLogEvent(event: CreateLogEventInput): Promise<LogEvent> {

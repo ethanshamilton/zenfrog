@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     ingestion::{self, IngestionConfig},
-    models::{Entry, LogEvent, Message, MessageMetadata, Thread},
+    models::{Entry, LogEvent, Message, MessageMetadata, TagSummary, Thread},
 };
 
 use super::{ingest, ingest::JournalRow, DbError, DbResult};
@@ -83,6 +83,50 @@ impl Db {
         entries.sort_by(|a, b| b.date.cmp(&a.date));
         entries.truncate(n);
         Ok(entries)
+    }
+
+    pub async fn list_tags(&self) -> DbResult<Vec<TagSummary>> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        if self.table_exists("journal").await? {
+            let table = self.conn.open_table("journal").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for (entry, _) in entries_from_batches(&batches, false)? {
+                for tag in entry.tags {
+                    *counts.entry(tag).or_insert(0) += 1;
+                }
+            }
+        }
+
+        if self.table_exists("log_events").await? {
+            let table = self.conn.open_table("log_events").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for event in log_events_from_batches(&batches)? {
+                for tag in event.tags {
+                    *counts.entry(tag).or_insert(0) += 1;
+                }
+            }
+        }
+
+        if self.table_exists("threads").await? {
+            let table = self.conn.open_table("threads").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for thread in threads_from_batches(&batches)? {
+                for tag in thread.tags.unwrap_or_default() {
+                    *counts.entry(tag).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut summaries = counts
+            .into_iter()
+            .map(|(tag, count)| TagSummary { tag, count })
+            .collect::<Vec<_>>();
+        summaries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.tag.cmp(&b.tag)));
+        Ok(summaries)
     }
 
     pub async fn get_similar_entries(

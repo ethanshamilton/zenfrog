@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
+import HomeComposer from '../components/HomeComposer'
 import RecentListPanel from '../components/RecentListPanel'
 import { useMeasuredRecentList } from '../hooks/useMeasuredRecentList'
+import { useTagTaxonomy } from '../hooks/useTagTaxonomy'
 import { apiService, type Entry, type LogEvent } from '../services/api'
 import type { Thread } from '../types'
 import './HomePage.css'
@@ -11,17 +13,20 @@ interface HomePageProps {
   onOpenSettings: () => void
 }
 
-const formatPromptTime = () =>
-  new Date().toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
+const shortDayCodes = ['Sun', 'M', 'T', 'W', 'R', 'F', 'Sat']
+
+const pad2 = (value: number) => value.toString().padStart(2, '0')
 
 const formatDate = (value: string) => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleDateString()
+}
+
+const formatLogDateTime = (value: string) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return `${shortDayCodes[date.getDay()]} ${pad2(date.getMonth() + 1)}/${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
 }
 
 const makePreview = (text: string, maxLength = 140) => {
@@ -33,10 +38,8 @@ const makePreview = (text: string, maxLength = 140) => {
 const getEntryKey = (entry: Entry) => entry.entry_id || `${entry.date}:${entry.title}`
 
 const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => {
-  const [promptTime, setPromptTime] = useState(formatPromptTime)
-  const [composerText, setComposerText] = useState('')
   const [expandedEntryIds, setExpandedEntryIds] = useState<Set<string>>(() => new Set())
-  const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const tagTaxonomy = useTagTaxonomy()
 
   const logsList = useMeasuredRecentList<LogEvent>({
     fetchItems: useCallback(
@@ -60,22 +63,6 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
     fetchItems: useCallback((limit) => apiService.getRecentEntries(limit), []),
     estimateItemHeight: 88,
   })
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setPromptTime(formatPromptTime())
-    }, 30_000)
-
-    return () => window.clearInterval(interval)
-  }, [])
-
-  useLayoutEffect(() => {
-    const textarea = composerTextareaRef.current
-    if (!textarea) return
-
-    textarea.style.height = 'auto'
-    textarea.style.height = `${textarea.scrollHeight}px`
-  }, [composerText])
 
   const toggleEntryExpanded = (entryId: string) => {
     setExpandedEntryIds((current) => {
@@ -113,7 +100,7 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
           renderItem={(log) => (
             <button className="home-list-item" onClick={() => onOpenLogs(log.log_event_id)}>
               <span>{log.text}</span>
-              <small>{formatDate(log.datetime)}{log.tags.length > 0 ? ` · ${log.tags.join(', ')}` : ''}</small>
+              <small>{formatLogDateTime(log.datetime)}{log.tags.length > 0 ? ` · ${log.tags.join(', ')}` : ''}</small>
             </button>
           )}
         />
@@ -175,22 +162,15 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
         />
       </section>
 
-      <section className="home-composer" aria-label="Composer">
-        <div className="home-composer-label">Panel D</div>
-        <div className="home-composer-row">
-          <label className="home-terminal-input">
-            <span className="home-terminal-prompt">{promptTime} &gt;</span>
-            <textarea
-              ref={composerTextareaRef}
-              value={composerText}
-              onChange={(event) => setComposerText(event.target.value)}
-              placeholder="ENTER writes a new log event. CTRL+ENTER starts a new chat."
-              rows={1}
-            />
-          </label>
-          <button onClick={() => onOpenChat()}>Open Chat</button>
-        </div>
-      </section>
+      <HomeComposer
+        tagSuggestions={tagTaxonomy.tags}
+        onTagsCreated={tagTaxonomy.addOptimisticTags}
+        onLogCreated={() => {
+          logsList.refresh()
+          tagTaxonomy.refresh()
+        }}
+        onOpenChat={() => onOpenChat()}
+      />
     </main>
   )
 }

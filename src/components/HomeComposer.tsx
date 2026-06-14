@@ -177,8 +177,10 @@ const HomeComposer = ({
   const acceptTagSuggestion = (tag: string) => {
     if (!activeTagToken) return
 
-    const nextText = `${composerText.slice(0, activeTagToken.start)}${tag}${composerText.slice(activeTagToken.end)}`
-    const nextCaretIndex = activeTagToken.start + tag.length
+    const suffix = composerText.slice(activeTagToken.end)
+    const separator = suffix.startsWith(' ') || suffix.startsWith('\n') ? '' : ' '
+    const nextText = `${composerText.slice(0, activeTagToken.start)}${tag}${separator}${suffix}`
+    const nextCaretIndex = activeTagToken.start + tag.length + separator.length
     setComposerText(nextText)
     setCaretIndex(nextCaretIndex)
     setSelectedSuggestionIndex(0)
@@ -301,7 +303,6 @@ const HomeComposer = ({
 
   return (
     <section className="home-composer" aria-label="Composer">
-      <div className="home-composer-label">Panel D</div>
       <div className="home-composer-row">
         <div className="home-terminal-input">
           <div className="home-terminal-prompt-wrap" ref={dateTimePickerRef}>
@@ -309,6 +310,7 @@ const HomeComposer = ({
               type="button"
               className="home-terminal-prompt"
               onClick={closeOrOpenDateTimePicker}
+              aria-label="Set log date and time"
               title="Set log date/time"
             >
               {formatPromptTime(logDateTime)} &gt;
@@ -327,7 +329,7 @@ const HomeComposer = ({
                   Time
                   <div className="home-time-fields">
                     <input
-                      aria-label="Hour"
+                      aria-label="Log hour, 24-hour time"
                       inputMode="numeric"
                       pattern="[0-9]*"
                       value={timeDraft.hour}
@@ -337,7 +339,7 @@ const HomeComposer = ({
                     />
                     <span>:</span>
                     <input
-                      aria-label="Minute"
+                      aria-label="Log minute"
                       inputMode="numeric"
                       pattern="[0-9]*"
                       value={timeDraft.minute}
@@ -388,10 +390,10 @@ const HomeComposer = ({
           )}
         </div>
         <div className="home-composer-actions">
-          <button onClick={() => void submitLog()} disabled={!canSubmitLog}>
+          <button onClick={() => void submitLog()} disabled={!canSubmitLog} aria-label="Create log event">
             [Log]
           </button>
-          <button onClick={submitChat} disabled={!canSubmitChat}>
+          <button onClick={submitChat} disabled={!canSubmitChat} aria-label="Start chat from composer text">
             [Chat]
           </button>
         </div>

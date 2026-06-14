@@ -2,7 +2,7 @@ import type React from 'react'
 import './RecentListPanel.css'
 
 interface RecentListPanelProps<T> {
-  label: string
+  label?: string
   title: string
   items: T[]
   loading: boolean
@@ -30,7 +30,7 @@ function RecentListPanel<T>({
     <section className="home-panel recent-list-panel">
       <div className="home-panel-header recent-list-header">
         <div>
-          <p>{label}</p>
+          {label && <p>{label}</p>}
           <h2>{title}</h2>
         </div>
         {onRefresh && (

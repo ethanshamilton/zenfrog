@@ -4,15 +4,6 @@
   background: black;
 }
 
-.home-composer-label {
-  margin: 0 0 0.35rem;
-  color: #ff8800;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
 .home-composer-row {
   display: flex;
   gap: 0.5rem;

@@ -96,7 +96,6 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
 
       <section className="home-panels" aria-label="Home dashboard panels">
         <RecentListPanel
-          label="Panel A"
           title="Recent Logs"
           items={logsList.items}
           loading={logsList.loading}
@@ -105,7 +104,12 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
           onRefresh={logsList.refresh}
           getItemKey={(log) => log.log_event_id}
           renderItem={(log) => (
-            <button className="home-list-item" onClick={() => onOpenLogs(log.log_event_id)}>
+            <button
+              className="home-list-item"
+              onClick={() => onOpenLogs(log.log_event_id)}
+              aria-label={`Open log from ${formatLogDateTime(log.datetime)}`}
+              title={`Open log from ${formatLogDateTime(log.datetime)}`}
+            >
               <span>{log.text}</span>
               <small>{formatLogDateTime(log.datetime)}{log.tags.length > 0 ? ` · ${log.tags.join(', ')}` : ''}</small>
             </button>
@@ -113,7 +117,6 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
         />
 
         <RecentListPanel
-          label="Panel B"
           title="Recent Threads"
           items={threadsList.items}
           loading={threadsList.loading}
@@ -122,7 +125,12 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
           onRefresh={threadsList.refresh}
           getItemKey={(thread) => thread.thread_id}
           renderItem={(thread) => (
-            <button className="home-list-item" onClick={() => onOpenChat({ threadId: thread.thread_id })}>
+            <button
+              className="home-list-item"
+              onClick={() => onOpenChat({ threadId: thread.thread_id })}
+              aria-label={`Open chat ${thread.title}`}
+              title={`Open chat ${thread.title}`}
+            >
               <span>{thread.title}</span>
               <small>
                 Updated {formatDate(thread.updated_at)}
@@ -133,7 +141,6 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
         />
 
         <RecentListPanel
-          label="Panel C"
           title="Recent Entries"
           items={entriesList.items}
           loading={entriesList.loading}
@@ -150,6 +157,8 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
                 className={`home-list-item recent-entry-item ${isExpanded ? 'expanded' : ''}`}
                 onClick={() => toggleEntryExpanded(entryKey)}
                 aria-expanded={isExpanded}
+                aria-label={`${isExpanded ? 'Collapse' : 'Expand'} entry ${entry.title || 'Untitled entry'}`}
+                title={`${isExpanded ? 'Collapse' : 'Expand'} entry ${entry.title || 'Untitled entry'}`}
               >
                 <div className="recent-entry-title-row">
                   <span>{entry.title || 'Untitled entry'}</span>

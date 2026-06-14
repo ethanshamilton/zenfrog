@@ -24,14 +24,24 @@ const shortDayCodes = ['Sun', 'M', 'T', 'W', 'R', 'F', 'Sat']
 
 const pad2 = (value: number) => value.toString().padStart(2, '0')
 
+const parseDateForDisplay = (value: string) => {
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch
+    return new Date(Number(year), Number(month) - 1, Number(day))
+  }
+
+  return new Date(value)
+}
+
 const formatDate = (value: string) => {
-  const date = new Date(value)
+  const date = parseDateForDisplay(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleDateString()
 }
 
 const formatLogDateTime = (value: string) => {
-  const date = new Date(value)
+  const date = parseDateForDisplay(value)
   if (Number.isNaN(date.getTime())) return value
   return `${shortDayCodes[date.getDay()]} ${pad2(date.getMonth() + 1)}/${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
 }
@@ -102,6 +112,7 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
           error={logsList.error}
           bodyRef={logsList.bodyRef}
           onRefresh={logsList.refresh}
+          onTitleClick={() => onOpenLogs()}
           getItemKey={(log) => log.log_event_id}
           renderItem={(log) => (
             <button

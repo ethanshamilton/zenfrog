@@ -11,6 +11,7 @@ interface RecentListPanelProps<T> {
   renderItem: (item: T, index: number) => React.ReactNode
   getItemKey: (item: T, index: number) => React.Key
   onRefresh?: () => void
+  onTitleClick?: () => void
   emptyMessage?: string
 }
 
@@ -24,6 +25,7 @@ function RecentListPanel<T>({
   renderItem,
   getItemKey,
   onRefresh,
+  onTitleClick,
   emptyMessage = 'Nothing recent yet.',
 }: RecentListPanelProps<T>) {
   return (
@@ -31,7 +33,13 @@ function RecentListPanel<T>({
       <div className="home-panel-header recent-list-header">
         <div>
           {label && <p>{label}</p>}
-          <h2>{title}</h2>
+          {onTitleClick ? (
+            <button className="recent-list-title-button" onClick={onTitleClick} type="button">
+              {title}
+            </button>
+          ) : (
+            <h2>{title}</h2>
+          )}
         </div>
         {onRefresh && (
           <button className="recent-list-refresh" onClick={onRefresh} disabled={loading}>

@@ -12,6 +12,22 @@
   gap: 0.75rem;
 }
 
+.recent-list-title-button {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: white;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-list-title-button:hover {
+  color: #ff8800;
+}
+
 .recent-list-refresh {
   border: 1px solid #333;
   border-radius: 4px;

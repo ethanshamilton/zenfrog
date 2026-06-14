@@ -125,8 +125,16 @@ export const apiService = {
     return invoke('list_tags')
   },
 
+  async deleteTag(tag: string): Promise<void> {
+    return invoke('delete_tag', { tag })
+  },
+
   async createLogEvent(event: CreateLogEventInput): Promise<LogEvent> {
     return invoke('create_log_event', { event })
+  },
+
+  async deleteLogEvent(logEventId: string): Promise<void> {
+    return invoke('delete_log_event', { logEventId })
   },
 
   async listLogEvents(args: {

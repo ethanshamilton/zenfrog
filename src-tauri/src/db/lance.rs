@@ -129,6 +129,92 @@ impl Db {
         Ok(summaries)
     }
 
+    pub async fn delete_tag(&self, tag: String) -> DbResult<()> {
+        if tag.trim().is_empty() {
+            return Err(DbError::InvalidData("tag cannot be empty".to_string()));
+        }
+
+        if self.table_exists("journal").await? {
+            let table = self.conn.open_table("journal").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            let mut rows = journal_rows_from_batches(&batches)?
+                .into_iter()
+                .filter_map(|mut row| {
+                    let original_len = row.tags.len();
+                    row.tags.retain(|row_tag| row_tag != &tag);
+                    (row.tags.len() != original_len).then_some(row)
+                })
+                .collect::<Vec<_>>();
+
+            for row in &rows {
+                table
+                    .delete(&format!("entry_id = '{}'", escape_sql(&row.entry_id)))
+                    .await?;
+            }
+            if !rows.is_empty() {
+                table.add(journal_batch(&rows)?).execute().await?;
+                rows.clear();
+            }
+        }
+
+        if self.table_exists("log_events").await? {
+            let table = self.conn.open_table("log_events").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            let events = log_events_from_batches(&batches)?
+                .into_iter()
+                .filter_map(|mut event| {
+                    let original_len = event.tags.len();
+                    event.tags.retain(|event_tag| event_tag != &tag);
+                    (event.tags.len() != original_len).then_some(event)
+                })
+                .collect::<Vec<_>>();
+
+            for event in &events {
+                table
+                    .delete(&format!(
+                        "log_event_id = '{}'",
+                        escape_sql(&event.log_event_id)
+                    ))
+                    .await?;
+            }
+            if !events.is_empty() {
+                table.add(log_event_batch(&events)?).execute().await?;
+            }
+        }
+
+        if self.table_exists("threads").await? {
+            let table = self.conn.open_table("threads").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            let threads = threads_from_batches(&batches)?
+                .into_iter()
+                .filter_map(|mut thread| {
+                    let mut tags = thread.tags.unwrap_or_default();
+                    let original_len = tags.len();
+                    tags.retain(|thread_tag| thread_tag != &tag);
+                    if tags.len() == original_len {
+                        return None;
+                    }
+                    thread.tags = Some(tags);
+                    Some(thread)
+                })
+                .collect::<Vec<_>>();
+
+            for thread in &threads {
+                table
+                    .delete(&format!("thread_id = '{}'", escape_sql(&thread.thread_id)))
+                    .await?;
+            }
+            if !threads.is_empty() {
+                table.add(thread_batch(&threads)?).execute().await?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn get_similar_entries(
         &self,
         embedding: Vec<f64>,
@@ -343,6 +429,23 @@ impl Db {
             .execute()
             .await?;
         Ok(event)
+    }
+
+    pub async fn delete_log_event(&self, log_event_id: String) -> DbResult<()> {
+        if log_event_id.trim().is_empty() {
+            return Err(DbError::InvalidData(
+                "log event id cannot be empty".to_string(),
+            ));
+        }
+
+        let table = self.conn.open_table("log_events").execute().await?;
+        table
+            .delete(&format!(
+                "log_event_id = '{}'",
+                escape_sql(&log_event_id)
+            ))
+            .await?;
+        Ok(())
     }
 
     pub async fn list_log_events(
@@ -951,6 +1054,42 @@ fn entries_from_batches(
     Ok(entries)
 }
 
+fn journal_rows_from_batches(batches: &[RecordBatch]) -> DbResult<Vec<JournalRow>> {
+    let mut rows = Vec::new();
+    for batch in batches {
+        let entry_ids = string_column(batch, "entry_id")?;
+        let dates = string_column(batch, "date")?;
+        let titles = string_column(batch, "title")?;
+        let texts = string_column(batch, "text")?;
+        let tags = list_string_column(batch, "tags")?;
+        let embeddings = fixed_f32_column(batch, "embedding")?;
+        let entry_types = string_column(batch, "entry_type")?;
+        let source_paths = string_column(batch, "source_path")?;
+        let embedding_keys = string_column(batch, "embedding_key")?;
+        let content_hashes = string_column(batch, "content_hash")?;
+        let source_mtime_ms = int_column(batch, "source_mtime_ms")?;
+        let indexed_ats = string_column(batch, "indexed_at")?;
+
+        for i in 0..batch.num_rows() {
+            rows.push(JournalRow {
+                entry_id: string_value(entry_ids, i),
+                date: string_value(dates, i),
+                title: string_value(titles, i),
+                text: string_value(texts, i),
+                tags: list_string_value(tags, i),
+                embedding: fixed_f32_value(embeddings, i),
+                entry_type: string_value(entry_types, i),
+                source_path: string_value(source_paths, i),
+                embedding_key: string_value(embedding_keys, i),
+                content_hash: string_value(content_hashes, i),
+                source_mtime_ms: int_value(source_mtime_ms, i),
+                indexed_at: string_value(indexed_ats, i),
+            });
+        }
+    }
+    Ok(rows)
+}
+
 fn string_column<'a>(batch: &'a RecordBatch, column: &str) -> DbResult<&'a StringArray> {
     let idx = batch
         .schema()
@@ -1025,6 +1164,26 @@ fn fixed_f32_value(array: &FixedSizeListArray, row: usize) -> Vec<f32> {
             }
         })
         .collect()
+}
+
+fn int_column<'a>(batch: &'a RecordBatch, column: &str) -> DbResult<&'a Int64Array> {
+    let idx = batch
+        .schema()
+        .index_of(column)
+        .map_err(|_| DbError::MissingColumn(column.to_string()))?;
+    batch
+        .column(idx)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .ok_or_else(|| DbError::InvalidData(format!("column {column} is not int64")))
+}
+
+fn int_value(array: &Int64Array, row: usize) -> i64 {
+    if array.is_null(row) {
+        0
+    } else {
+        array.value(row)
+    }
 }
 
 fn float_column<'a>(batch: &'a RecordBatch, column: &str) -> DbResult<&'a dyn Array> {

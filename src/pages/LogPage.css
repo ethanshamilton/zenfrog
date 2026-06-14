@@ -1,0 +1,389 @@
+.log-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: black;
+  color: white;
+}
+
+.log-page-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #333;
+  background: #050505;
+}
+
+.log-page-toolbar-left,
+.log-page-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.log-page-toolbar button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  background: #ae5d00;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.log-page-view-select-label select {
+  border: none;
+  padding: 0;
+  background: black;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+  color-scheme: dark;
+}
+
+.log-page-toolbar button:hover {
+  background: #ff8800;
+}
+
+.log-page-view-select-label select:hover {
+  color: #ff8800;
+}
+
+.log-page-view-select-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.log-page-toolbar-label {
+  color: #888;
+  font-size: 0.85rem;
+}
+
+.log-page-search {
+  width: min(280px, 32vw);
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  background: black;
+  color: white;
+  font: inherit;
+}
+
+.log-page-search::placeholder {
+  color: #666;
+}
+
+.log-page-tag-filter {
+  position: relative;
+}
+
+.log-page-toolbar .log-page-tag-filter-button {
+  max-width: 320px;
+  overflow: hidden;
+  border: 1px solid #333;
+  background: black;
+  color: white;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-page-toolbar .log-page-tag-filter-button:hover {
+  border-color: #ff8800;
+  background: black;
+  color: #ff8800;
+}
+
+.log-page-tag-filter-menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 30;
+  width: min(320px, calc(100vw - 2rem));
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 6px;
+  background: #050505;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.log-page-tag-filter-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #333;
+  color: #888;
+  font-size: 0.8rem;
+}
+
+.log-page-toolbar .log-page-tag-filter-menu-header button {
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.25rem 0.45rem;
+  background: #1a1a1a;
+  color: #ccc;
+  font-size: 0.75rem;
+}
+
+.log-page-toolbar .log-page-tag-filter-menu-header button:hover:not(:disabled) {
+  border-color: #ff8800;
+  background: #2a2a2a;
+  color: white;
+}
+
+.log-page-toolbar .log-page-tag-filter-menu-header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.log-page-tag-filter-search {
+  box-sizing: border-box;
+  width: calc(100% - 1rem);
+  margin: 0.5rem;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.5rem;
+  background: black;
+  color: white;
+  font: inherit;
+  outline: none;
+}
+
+.log-page-tag-filter-search:focus {
+  border-color: #ff8800;
+}
+
+.log-page-tag-filter-search::placeholder {
+  color: #666;
+}
+
+.log-page-selected-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0 0.5rem 0.5rem;
+  border-bottom: 1px solid #222;
+}
+
+.log-page-toolbar .log-page-selected-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  border: 1px solid #333;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  background: #111;
+  color: #ddd;
+  font-size: 0.75rem;
+}
+
+.log-page-toolbar .log-page-selected-tag:hover {
+  border-color: #ff8800;
+  background: #1a1a1a;
+  color: white;
+}
+
+.log-page-tag-filter-results {
+  padding: 0.25rem 0;
+}
+
+.log-page-toolbar .log-page-tag-filter-option {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  color: white;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.log-page-toolbar .log-page-tag-filter-option:hover {
+  background: #1a1a1a;
+  color: #ff8800;
+}
+
+.log-page-tag-filter-option small {
+  color: #888;
+}
+
+.log-page-tag-filter-empty {
+  padding: 0.75rem;
+  color: #888;
+}
+
+.log-page-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.log-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-top: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.log-page-day-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.log-page-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  color: #ccc;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.log-page-day-divider::before,
+.log-page-day-divider::after {
+  content: '';
+  height: 1px;
+  background: white;
+}
+
+.log-page-day-divider::before {
+  display: none;
+}
+
+.log-page-day-divider::after {
+  flex: 1;
+}
+
+.log-page-event {
+  padding: 0;
+  border: none;
+  background: black;
+  cursor: pointer;
+}
+
+.log-page-event.focused {
+  background: #1a1a1a;
+}
+
+.log-page-event p {
+  display: flex;
+  align-items: baseline;
+  margin: 0;
+  color: white;
+  line-height: 1.35;
+}
+
+.log-page-event-prefix {
+  flex: 0 0 7ch;
+  margin-right: 1ch;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: #ff8800;
+  font: inherit;
+  text-align: right;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.log-page-event-prefix:hover {
+  color: #ffb15c;
+}
+
+.log-page-event-prefix time {
+  color: inherit;
+}
+
+.log-page-event-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+.log-page-event-tags {
+  flex: 0 0 auto;
+  margin-left: 1ch;
+  color: #666;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.log-page-log-action-menu {
+  width: max-content;
+  min-width: 150px;
+  margin: 0.35rem 0 0 8ch;
+  overflow: hidden;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 6px;
+  background: #050505;
+}
+
+.log-page-log-action-menu button {
+  width: 100%;
+  border: none;
+  padding: 0.55rem 0.75rem;
+  background: transparent;
+  color: #ffb15c;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.log-page-log-action-menu button:hover {
+  background: #2a1a1a;
+  color: white;
+}
+
+.log-page-composer-shell {
+  flex: 0 0 auto;
+  border-top: 1px solid #333;
+  background: black;
+}
+
+.log-page-placeholder {
+  margin: 0;
+  color: #888;
+}
+
+.log-page-error {
+  color: #ffb15c;
+}
+
+@media (max-width: 760px) {
+  .log-page-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .log-page-toolbar-left,
+  .log-page-toolbar-right {
+    justify-content: space-between;
+  }
+
+  .log-page-search {
+    flex: 1;
+    width: auto;
+  }
+}

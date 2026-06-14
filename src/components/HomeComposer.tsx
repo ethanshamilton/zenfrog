@@ -7,7 +7,8 @@ interface HomeComposerProps {
   tagSuggestions: TagSummary[]
   onTagsCreated: (tags: string[]) => void
   onLogCreated: () => void
-  onOpenChat: (initialMessage: string) => void
+  onOpenChat?: (initialMessage: string) => void
+  allowChat?: boolean
 }
 
 const MAX_TEXTAREA_HEIGHT = 160
@@ -70,6 +71,7 @@ const HomeComposer = ({
   onTagsCreated,
   onLogCreated,
   onOpenChat,
+  allowChat = true,
 }: HomeComposerProps) => {
   const [currentTime, setCurrentTime] = useState(() => new Date())
   const [selectedDateTime, setSelectedDateTime] = useState<Date | null>(null)
@@ -98,7 +100,7 @@ const HomeComposer = ({
         .slice(0, 8)
     : []
   const canSubmitLog = parsedInput.text.length > 0 && !submitting
-  const canSubmitChat = chatMessage.length > 0 && !submitting
+  const canSubmitChat = allowChat && Boolean(onOpenChat) && chatMessage.length > 0 && !submitting
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -136,7 +138,7 @@ const HomeComposer = ({
 
   const submitChat = () => {
     const message = composerText.trim()
-    if (!message || submitting) return
+    if (!message || submitting || !allowChat || !onOpenChat) return
 
     setComposerText('')
     setCaretIndex(0)
@@ -226,8 +228,10 @@ const HomeComposer = ({
     if (event.key !== 'Enter') return
 
     if (event.ctrlKey || event.metaKey) {
-      event.preventDefault()
-      submitChat()
+      if (allowChat && onOpenChat) {
+        event.preventDefault()
+        submitChat()
+      }
       return
     }
 
@@ -366,7 +370,7 @@ const HomeComposer = ({
             onKeyUp={updateCaretIndex}
             onSelect={updateCaretIndex}
             onKeyDown={handleKeyDown}
-            placeholder="ENTER writes a new log event. CTRL+ENTER starts a new chat."
+            placeholder={allowChat ? 'ENTER writes a new log event. CTRL+ENTER starts a new chat.' : 'ENTER writes a new log event.'}
             rows={1}
             disabled={submitting}
           />
@@ -393,9 +397,11 @@ const HomeComposer = ({
           <button onClick={() => void submitLog()} disabled={!canSubmitLog} aria-label="Create log event">
             [Log]
           </button>
-          <button onClick={submitChat} disabled={!canSubmitChat} aria-label="Start chat from composer text">
-            [Chat]
-          </button>
+          {allowChat && (
+            <button onClick={submitChat} disabled={!canSubmitChat} aria-label="Start chat from composer text">
+              [Chat]
+            </button>
+          )}
         </div>
       </div>
       {error && <div className="home-composer-error">{error}</div>}

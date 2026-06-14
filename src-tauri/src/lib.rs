@@ -99,6 +99,15 @@ async fn list_tags(state: State<'_, DbState>) -> Result<Vec<TagSummary>, String>
 }
 
 #[tauri::command]
+async fn delete_tag(state: State<'_, DbState>, tag: String) -> Result<(), String> {
+    state
+        .db
+        .delete_tag(tag)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn vector_search_entries(
     state: State<'_, DbState>,
     embedding: Vec<f64>,
@@ -205,6 +214,15 @@ async fn create_log_event(state: State<'_, DbState>, event: LogEvent) -> Result<
     state
         .db
         .create_log_event(event)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn delete_log_event(state: State<'_, DbState>, log_event_id: String) -> Result<(), String> {
+    state
+        .db
+        .delete_log_event(log_event_id)
         .await
         .map_err(|err| err.to_string())
 }
@@ -325,6 +343,7 @@ pub fn run() {
             journal_chat,
             get_recent_entries,
             list_tags,
+            delete_tag,
             vector_search_entries,
             get_entries_by_date_range,
             create_thread,
@@ -333,6 +352,7 @@ pub fn run() {
             get_thread_messages,
             add_message_to_thread,
             create_log_event,
+            delete_log_event,
             list_log_events,
             update_thread_title,
             generate_thread_title,

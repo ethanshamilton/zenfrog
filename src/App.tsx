@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import ChatInterface from './components/ChatInterface'
 import LoadingScreen from './components/LoadingScreen'
 import HomePage from './pages/HomePage'
+import LogPage from './pages/LogPage'
 import NotImplementedPage from './components/NotImplementedPage'
 import { apiService } from './services/api'
 import type { Document } from './types'
@@ -87,10 +88,10 @@ function App() {
         )
       case 'logs':
         return (
-          <NotImplementedPage
-            title="Logs"
-            description={page.focusedLogEventId ? `Focused event: ${page.focusedLogEventId}` : 'Log browsing will live here.'}
+          <LogPage
+            focusedLogEventId={page.focusedLogEventId}
             onBackHome={() => setPage({ name: 'home' })}
+            onOpenSettings={() => setPage({ name: 'settings' })}
           />
         )
       case 'settings':

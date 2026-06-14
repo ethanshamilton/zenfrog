@@ -39,7 +39,9 @@ interface Message {
 
 interface ChatInterfaceProps {
   setDocuments: React.Dispatch<React.SetStateAction<CustomDocument[]>>
-  onLoadThread?: (threadId: string, messages: ThreadMessage[]) => void
+  threadId?: string
+  initialMessage?: string
+  autoSend?: boolean
 }
 
 const WELCOME_MESSAGE = "Hello! I'm here to help you search through your documents. What would you like to know?"
@@ -185,7 +187,7 @@ const ChatMessageCard = ({ message }: { message: Message }) => {
   )
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, onLoadThread }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, threadId, initialMessage, autoSend }) => {
 
   const [selectedModel, setSelectedModel] = useState({
     provider: "anthropic",
@@ -199,6 +201,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, onLoadThrea
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null)
   const [isThreadSaved, setIsThreadSaved] = useState(false)
   const [searchIterations, setSearchIterations] = useState<SearchIteration[]>([])
+  const handledInitialMessageRef = useRef<string | null>(null)
 
   const loadThread = (threadId: string, threadMessages: ThreadMessage[]) => {
     setCurrentThreadId(threadId)
@@ -213,13 +216,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, onLoadThrea
     setMessages(convertedMessages)
   }
 
-  // expose loadThread function to parent
   useEffect(() => {
-    if (onLoadThread) {
-      // this is a bit hacky but works for now
-      ;(window as any).loadThreadIntoChat = loadThread
+    if (!threadId) return
+
+    let cancelled = false
+
+    const loadThreadMessages = async () => {
+      try {
+        const threadMessages = await apiService.getThreadMessages(threadId)
+        if (!cancelled) {
+          loadThread(threadId, threadMessages)
+        }
+      } catch (error) {
+        console.error('Error loading thread messages:', error)
+      }
     }
-  }, [onLoadThread])
+
+    loadThreadMessages()
+
+    return () => {
+      cancelled = true
+    }
+  }, [threadId])
 
   const saveChat = async () => {
     const response = await apiService.createThread()
@@ -249,10 +267,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, onLoadThrea
     setMessages([makeWelcomeMessage()])
   }
 
-  const sendMessage = async () => {
-    if (!inputText.trim()) return
-
-    const query = inputText
+  const sendMessage = async (messageOverride?: string) => {
+    const query = (messageOverride ?? inputText).trim()
+    if (!query) return
     const userMessage: Message = {
       id: crypto.randomUUID(),
       text: query,
@@ -328,6 +345,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, onLoadThrea
       setIsLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!initialMessage) return
+
+    const initialMessageKey = `${threadId ?? 'new'}:${initialMessage}:${autoSend ? 'send' : 'draft'}`
+    if (handledInitialMessageRef.current === initialMessageKey) return
+    handledInitialMessageRef.current = initialMessageKey
+
+    if (autoSend) {
+      void sendMessage(initialMessage)
+    } else {
+      setInputText(initialMessage)
+    }
+  }, [threadId, initialMessage, autoSend])
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -437,7 +468,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, onLoadThrea
             disabled={isLoading}
           />
           <button
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={!inputText.trim() || isLoading}
             className="send-button"
           >

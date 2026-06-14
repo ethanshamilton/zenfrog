@@ -37,6 +37,17 @@
   border-bottom-color: #ff8800;
 }
 
+.home-tab {
+  flex: 0 0 auto;
+  color: white;
+  background-color: #ae5d00;
+  border-bottom-color: transparent;
+}
+
+.home-tab:hover {
+  background-color: #ff8800;
+}
+
 .sidebar-content {
   flex: 1;
   overflow: hidden;

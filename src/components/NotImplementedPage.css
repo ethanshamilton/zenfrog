@@ -1,0 +1,53 @@
+.not-implemented-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: black;
+  color: white;
+}
+
+.not-implemented-card {
+  width: min(560px, 100%);
+  padding: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background: black;
+  text-align: center;
+}
+
+.not-implemented-kicker {
+  margin: 0 0 0.75rem;
+  color: #ff8800;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.not-implemented-card h1 {
+  margin: 0 0 0.75rem;
+  color: white;
+}
+
+.not-implemented-card p:not(.not-implemented-kicker) {
+  margin: 0 0 1.5rem;
+  color: #ccc;
+}
+
+.not-implemented-card button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.75rem 1.5rem;
+  background: #ae5d00;
+  color: white;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.not-implemented-card button:hover {
+  background: #ff8800;
+}

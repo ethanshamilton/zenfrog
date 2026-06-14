@@ -16,11 +16,14 @@ export interface RetrievedDoc {
   distance: number | null
 }
 
-export interface LogEvent {
-  log_event_id?: string
+export interface CreateLogEventInput {
   datetime: string
   text: string
   tags: string[]
+}
+
+export interface LogEvent extends CreateLogEventInput {
+  log_event_id: string
 }
 
 export type LogEventOrder = 'ascending' | 'descending'
@@ -109,7 +112,11 @@ export const apiService = {
     })
   },
 
-  async createLogEvent(event: LogEvent): Promise<LogEvent> {
+  async getRecentEntries(n?: number): Promise<Entry[]> {
+    return invoke('get_recent_entries', { n })
+  },
+
+  async createLogEvent(event: CreateLogEventInput): Promise<LogEvent> {
     return invoke('create_log_event', { event })
   },
 

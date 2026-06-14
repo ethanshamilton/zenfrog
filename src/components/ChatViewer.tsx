@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import './ChatViewer.css'
 import { apiService } from '../services/api'
-import type { Thread, ThreadMessage } from '../types'
+import type { Thread } from '../types'
 
 interface ChatViewerProps {
-  onLoadThread: (threadId: string, messages: ThreadMessage[]) => void
+  onLoadThread: (threadId: string) => void
 }
 
 const ChatViewer = ({ onLoadThread }: ChatViewerProps) => {
@@ -30,17 +30,8 @@ const ChatViewer = ({ onLoadThread }: ChatViewerProps) => {
     }
   }
 
-  const handleLoadThread = async (threadId: string, existingMessages: ThreadMessage[]) => {
-    try {
-      // if we don't have messages yet, fetch them
-      let messages = existingMessages
-      if (messages.length === 0) {
-        messages = await apiService.getThreadMessages(threadId)
-      }
-      onLoadThread(threadId, messages)
-    } catch (error) {
-      console.error('Error loading thread messages:', error)
-    }
+  const handleLoadThread = (threadId: string) => {
+    onLoadThread(threadId)
   }
 
   const handleDeleteThread = async (threadId: string) => {
@@ -110,7 +101,7 @@ const ChatViewer = ({ onLoadThread }: ChatViewerProps) => {
           <div
             key={thread.thread_id}
             className="thread-item"
-            onClick={() => handleLoadThread(thread.thread_id, [])}
+            onClick={() => handleLoadThread(thread.thread_id)}
             onDoubleClick={() => handleStartEdit(thread)}
           >
             <div className="thread-header">

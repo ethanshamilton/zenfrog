@@ -1,0 +1,198 @@
+.home-page {
+  position: relative;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: black;
+  color: white;
+}
+
+.home-panels {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid #ccc;
+}
+
+.home-panel {
+  min-width: 0;
+  padding: 1rem;
+  overflow: auto;
+  border-right: 1px solid #ccc;
+  background: black;
+}
+
+.home-panel:last-child {
+  border-right: none;
+}
+
+.home-panel-header {
+  margin-bottom: 1rem;
+  padding-right: 44px;
+}
+
+.home-panel-header p,
+.home-composer-label {
+  margin: 0 0 0.35rem;
+  color: #ff8800;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.home-panel-header h2 {
+  margin: 0;
+  color: white;
+  font-size: 1.1rem;
+}
+
+.home-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.home-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 4px;
+  background: #1a1a1a;
+  color: white;
+  text-align: left;
+  font: inherit;
+}
+
+button.home-list-item {
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+button.home-list-item:hover {
+  border-color: #ff8800;
+  background: #2a2a2a;
+}
+
+.home-list-item small {
+  color: #888;
+}
+
+.home-list-item-static {
+  border-left-color: #666;
+}
+
+.home-composer {
+  flex: 0 0 auto;
+  padding: 1rem;
+  background: black;
+}
+
+.home-composer-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.home-terminal-input {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 4px;
+  background: #050505;
+  color: white;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  cursor: text;
+}
+
+.home-terminal-input:focus-within {
+  border-color: #ff8800;
+}
+
+.home-terminal-prompt {
+  flex: 0 0 auto;
+  color: #ff8800;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.home-terminal-input textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.4em;
+  resize: none;
+  overflow: hidden;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: white;
+  font: inherit;
+  line-height: 1.4;
+  outline: none;
+}
+
+.home-terminal-input textarea::placeholder {
+  color: #666;
+}
+
+.home-composer-row button,
+.home-settings-button {
+  border: none;
+  background: #ae5d00;
+  color: white;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.home-composer-row button {
+  border-radius: 8px;
+  padding: 0.75rem 1.5rem;
+}
+
+.home-settings-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 1rem;
+}
+
+.home-composer-row button:hover,
+.home-settings-button:hover {
+  background: #ff8800;
+}
+
+@media (max-width: 760px) {
+  .home-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .home-panel {
+    border-right: none;
+    border-bottom: 1px solid #ccc;
+  }
+
+  .home-composer-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

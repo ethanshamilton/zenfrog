@@ -3,12 +3,14 @@
   display: flex;
   flex-direction: column;
   background: #181a20;
-  color: #eaeaea
+  color: #eaeaea;
 }
 
 .app-container {
   display: flex;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   background: #23262f;
 }
+

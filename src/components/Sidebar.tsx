@@ -2,21 +2,25 @@ import { useState } from 'react'
 import './Sidebar.css'
 import DocumentViewer from './DocumentViewer'
 import ChatViewer from './ChatViewer'
-import type { Document, ThreadMessage } from '../types'
+import type { Document } from '../types'
 
 interface SidebarProps {
   documents: Document[]
-  onLoadThread: (threadId: string, messages: ThreadMessage[]) => void
+  onBackHome: () => void
+  onLoadThread: (threadId: string) => void
 }
 
 type TabType = 'documents' | 'chats'
 
-const Sidebar = ({ documents, onLoadThread }: SidebarProps) => {
+const Sidebar = ({ documents, onBackHome, onLoadThread }: SidebarProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('documents')
 
   return (
     <div className="sidebar">
       <div className="sidebar-tabs">
+        <button className="tab home-tab" onClick={onBackHome}>
+          Home
+        </button>
         <button
           className={`tab ${activeTab === 'documents' ? 'active' : ''}`}
           onClick={() => setActiveTab('documents')}

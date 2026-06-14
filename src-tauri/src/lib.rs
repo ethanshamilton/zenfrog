@@ -238,10 +238,15 @@ async fn generate_thread_title(
 ) -> Result<GenerateThreadTitleResponse, String> {
     let messages = state
         .db
-        .get_thread_messages(thread_id)
+        .get_thread_messages(thread_id.clone())
         .await
         .map_err(|err| err.to_string())?;
     let title = llm::generate_thread_title(&messages).await?;
+    state
+        .db
+        .update_thread_title(thread_id, title.clone())
+        .await
+        .map_err(|err| err.to_string())?;
     Ok(GenerateThreadTitleResponse { title })
 }
 

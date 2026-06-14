@@ -1,29 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import RecentListPanel from '../components/RecentListPanel'
+import { useMeasuredRecentList } from '../hooks/useMeasuredRecentList'
+import { apiService, type Entry, type LogEvent } from '../services/api'
+import type { Thread } from '../types'
 import './HomePage.css'
 
 interface HomePageProps {
-  onOpenChat: () => void
+  onOpenChat: (threadId?: string) => void
   onOpenLogs: (focusedLogEventId?: string) => void
   onOpenSettings: () => void
 }
-
-const placeholderLogs = [
-  { id: 'log-morning-check-in', title: 'Morning check-in', meta: 'Today · mood, focus' },
-  { id: 'log-evening-review', title: 'Evening review', meta: 'Yesterday · reflection' },
-  { id: 'log-training-note', title: 'Training note', meta: 'This week · energy' },
-]
-
-const placeholderThreads = [
-  { id: 'thread-journal-search', title: 'Journal search', meta: 'Recent conversation' },
-  { id: 'thread-patterns', title: 'Recurring patterns', meta: 'Open in chat' },
-  { id: 'thread-weekly-review', title: 'Weekly review', meta: 'Continue thread' },
-]
-
-const placeholderEntries = [
-  { id: 'entry-1', title: 'Planning notes', meta: 'Recent entry' },
-  { id: 'entry-2', title: 'Work session', meta: 'Recent entry' },
-  { id: 'entry-3', title: 'Personal reflection', meta: 'Recent entry' },
-]
 
 const formatPromptTime = () =>
   new Date().toLocaleTimeString([], {
@@ -32,10 +18,39 @@ const formatPromptTime = () =>
     hour12: false,
   })
 
+const formatDate = (value: string) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString()
+}
+
 const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => {
   const [promptTime, setPromptTime] = useState(formatPromptTime)
   const [composerText, setComposerText] = useState('')
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const logsList = useMeasuredRecentList<LogEvent>({
+    fetchItems: useCallback(
+      (limit) => apiService.listLogEvents({ order: 'descending', limit }),
+      [],
+    ),
+    estimateItemHeight: 72,
+  })
+
+  const threadsList = useMeasuredRecentList<Thread>({
+    fetchItems: useCallback(async (limit) => {
+      const threads = await apiService.getThreads()
+      return [...threads]
+        .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+        .slice(0, limit)
+    }, []),
+    estimateItemHeight: 72,
+  })
+
+  const entriesList = useMeasuredRecentList<Entry>({
+    fetchItems: useCallback((limit) => apiService.getRecentEntries(limit), []),
+    estimateItemHeight: 88,
+  })
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -65,50 +80,59 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
       </button>
 
       <section className="home-panels" aria-label="Home dashboard panels">
-        <section className="home-panel">
-          <div className="home-panel-header">
-            <p>Panel A</p>
-            <h2>Recent Logs</h2>
-          </div>
-          <div className="home-list">
-            {placeholderLogs.map((log) => (
-              <button key={log.id} className="home-list-item" onClick={() => onOpenLogs(log.id)}>
-                <span>{log.title}</span>
-                <small>{log.meta}</small>
-              </button>
-            ))}
-          </div>
-        </section>
+        <RecentListPanel
+          label="Panel A"
+          title="Recent Logs"
+          items={logsList.items}
+          loading={logsList.loading}
+          error={logsList.error}
+          bodyRef={logsList.bodyRef}
+          onRefresh={logsList.refresh}
+          getItemKey={(log) => log.log_event_id}
+          renderItem={(log) => (
+            <button className="home-list-item" onClick={() => onOpenLogs(log.log_event_id)}>
+              <span>{log.text}</span>
+              <small>{formatDate(log.datetime)}{log.tags.length > 0 ? ` · ${log.tags.join(', ')}` : ''}</small>
+            </button>
+          )}
+        />
 
-        <section className="home-panel">
-          <div className="home-panel-header">
-            <p>Panel B</p>
-            <h2>Recent Threads</h2>
-          </div>
-          <div className="home-list">
-            {placeholderThreads.map((thread) => (
-              <button key={thread.id} className="home-list-item" onClick={onOpenChat}>
-                <span>{thread.title}</span>
-                <small>{thread.meta}</small>
-              </button>
-            ))}
-          </div>
-        </section>
+        <RecentListPanel
+          label="Panel B"
+          title="Recent Threads"
+          items={threadsList.items}
+          loading={threadsList.loading}
+          error={threadsList.error}
+          bodyRef={threadsList.bodyRef}
+          onRefresh={threadsList.refresh}
+          getItemKey={(thread) => thread.thread_id}
+          renderItem={(thread) => (
+            <button className="home-list-item" onClick={() => onOpenChat(thread.thread_id)}>
+              <span>{thread.title}</span>
+              <small>
+                Updated {formatDate(thread.updated_at)}
+                {thread.tags && thread.tags.length > 0 ? ` · ${thread.tags.join(', ')}` : ''}
+              </small>
+            </button>
+          )}
+        />
 
-        <section className="home-panel">
-          <div className="home-panel-header">
-            <p>Panel C</p>
-            <h2>Recent Entries</h2>
-          </div>
-          <div className="home-list">
-            {placeholderEntries.map((entry) => (
-              <div key={entry.id} className="home-list-item home-list-item-static">
-                <span>{entry.title}</span>
-                <small>{entry.meta}</small>
-              </div>
-            ))}
-          </div>
-        </section>
+        <RecentListPanel
+          label="Panel C"
+          title="Recent Entries"
+          items={entriesList.items}
+          loading={entriesList.loading}
+          error={entriesList.error}
+          bodyRef={entriesList.bodyRef}
+          onRefresh={entriesList.refresh}
+          getItemKey={(entry) => entry.entry_id}
+          renderItem={(entry) => (
+            <div className="home-list-item home-list-item-static">
+              <span>{entry.title || 'Untitled entry'}</span>
+              <small>{formatDate(entry.date)}{entry.tags.length > 0 ? ` · ${entry.tags.join(', ')}` : ''}</small>
+            </div>
+          )}
+        />
       </section>
 
       <section className="home-composer" aria-label="Composer">
@@ -124,7 +148,7 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
               rows={1}
             />
           </label>
-          <button onClick={onOpenChat}>Open Chat</button>
+          <button onClick={() => onOpenChat()}>Open Chat</button>
         </div>
       </section>
     </main>

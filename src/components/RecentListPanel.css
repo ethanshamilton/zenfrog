@@ -1,0 +1,57 @@
+.recent-list-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.recent-list-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.recent-list-refresh {
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  background: #1a1a1a;
+  color: #ccc;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.recent-list-refresh:hover:not(:disabled) {
+  border-color: #ff8800;
+  background: #2a2a2a;
+  color: white;
+}
+
+.recent-list-refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.recent-list-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.recent-list-state {
+  padding: 0.75rem;
+  border: 1px solid #333;
+  border-left: 2px solid #666;
+  border-radius: 4px;
+  background: #1a1a1a;
+  color: #888;
+}
+
+.recent-list-error {
+  border-left-color: #ff8800;
+  color: #ffb15c;
+}

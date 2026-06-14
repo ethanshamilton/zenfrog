@@ -63,7 +63,7 @@ function App() {
       case 'home':
         return (
           <HomePage
-            onOpenChat={() => setPage({ name: 'chat' })}
+            onOpenChat={(threadId) => setPage({ name: 'chat', threadId })}
             onOpenLogs={(focusedLogEventId) => setPage({ name: 'logs', focusedLogEventId })}
             onOpenSettings={() => setPage({ name: 'settings' })}
           />

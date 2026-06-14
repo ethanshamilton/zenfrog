@@ -17,7 +17,10 @@ use lancedb::{
 };
 use uuid::Uuid;
 
-use crate::models::{Entry, Message, MessageMetadata, Thread};
+use crate::{
+    ingestion::{self, IngestionConfig},
+    models::{Entry, Message, MessageMetadata, Thread},
+};
 
 use super::{ingest, ingest::JournalRow, DbError, DbResult};
 
@@ -28,7 +31,7 @@ pub struct DbConfig {
     pub journal_dir: Option<PathBuf>,
     pub evergreen_dir: Option<PathBuf>,
     pub embeddings_path: Option<PathBuf>,
-    pub chats_path: Option<PathBuf>,
+    pub ingest_on_startup: bool,
 }
 
 #[derive(Clone)]
@@ -49,6 +52,14 @@ impl Db {
     pub async fn startup_ingest(&self) -> DbResult<()> {
         self.ensure_threads_table().await?;
         self.ensure_messages_table().await?;
+        if self.config.ingest_on_startup {
+            ingestion::run_startup_pipeline(&IngestionConfig {
+                journal_dir: self.config.journal_dir.clone(),
+                evergreen_dir: self.config.evergreen_dir.clone(),
+                embeddings_path: self.config.embeddings_path.clone(),
+            })
+            .await?;
+        }
         self.incremental_journal_ingest().await?;
         Ok(())
     }
@@ -876,7 +887,7 @@ mod tests {
             journal_dir: None,
             evergreen_dir: None,
             embeddings_path: None,
-            chats_path: None,
+            ingest_on_startup: false,
         };
         (dir, config)
     }
@@ -988,7 +999,7 @@ mod tests {
             journal_dir: Some(journal_dir),
             evergreen_dir: None,
             embeddings_path: Some(dir.path().join("embeddings.jsonl")),
-            chats_path: None,
+            ingest_on_startup: false,
         };
         let db = Db::connect(config).await.unwrap();
         db.startup_ingest().await.unwrap();

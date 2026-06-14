@@ -34,4 +34,8 @@ lancedb = "0.30.0"
 dotenvy = "0.15"
 baml = "0.221.0"
 reqwest = { version = "0.12", features = ["json"] }
+base64 = "0.22"
+regex = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
 

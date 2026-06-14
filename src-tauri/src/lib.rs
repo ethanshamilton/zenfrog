@@ -1,5 +1,7 @@
+mod ai;
 mod baml_client;
 mod db;
+mod ingestion;
 mod llm;
 mod models;
 
@@ -60,7 +62,9 @@ fn resolve_db_config(app: &tauri::App) -> Result<DbConfig, String> {
         journal_dir: env_path("ZENFROG_JOURNAL_DIR"),
         evergreen_dir: env_path("ZENFROG_EVERGREEN_DIR"),
         embeddings_path: env_path("ZENFROG_EMBEDDINGS_PATH"),
-        chats_path: env_path("ZENFROG_CHATS_PATH"),
+        ingest_on_startup: std::env::var("ZENFROG_INGEST_ON_STARTUP")
+            .map(|value| value != "false" && value != "0")
+            .unwrap_or(true),
     })
 }
 

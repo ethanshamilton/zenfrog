@@ -4,10 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
-use serde_json::json;
-
 use crate::{
+    ai,
     baml_client::{
         async_client::B,
         types::{SearchOptions as BamlSearchOptions, SearchToolCall, SearchToolType},
@@ -23,17 +21,6 @@ const MAX_AGENT_ITERATIONS: i64 = 5;
 const RECENT_PRESEED_COUNT: usize = 4;
 const DEFAULT_LIMIT: usize = 5;
 const MAX_CONTEXT_CHARS: usize = 48_000;
-
-#[derive(Debug, Deserialize)]
-struct GeminiEmbeddingValue {
-    values: Vec<f64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GeminiEmbeddingResponse {
-    embedding: Option<GeminiEmbeddingValue>,
-    embeddings: Option<Vec<GeminiEmbeddingValue>>,
-}
 
 #[derive(Debug, Clone)]
 struct RetrievedEntry {
@@ -303,51 +290,6 @@ async fn classify_personality(query: &str) -> Option<Personality> {
         .find(|p| p.title.eq_ignore_ascii_case(&selected))
 }
 
-async fn get_embedding(text: &str) -> Result<Vec<f64>, String> {
-    let api_key = std::env::var("GOOGLE_API_KEY")
-        .map_err(|_| "GOOGLE_API_KEY is required for vector search embeddings".to_string())?;
-    let model = std::env::var("ZENFROG_EMBEDDING_MODEL")
-        .unwrap_or_else(|_| "gemini-embedding-001".to_string());
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent?key={api_key}"
-    );
-
-    let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .json(&json!({
-            "model": format!("models/{model}"),
-            "content": {
-                "parts": [{ "text": text }]
-            }
-        }))
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("embedding request failed ({status}): {body}"));
-    }
-
-    let parsed = response
-        .json::<GeminiEmbeddingResponse>()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    parsed
-        .embedding
-        .map(|embedding| embedding.values)
-        .or_else(|| {
-            parsed
-                .embeddings
-                .and_then(|mut embeddings| embeddings.pop().map(|e| e.values))
-        })
-        .filter(|values| !values.is_empty())
-        .ok_or_else(|| "embedding API returned no values".to_string())
-}
-
 fn selected_client(req: &ChatRequest) -> Option<String> {
     if req.provider.trim().is_empty() || req.model.trim().is_empty() {
         None
@@ -496,7 +438,7 @@ async fn initial_context(
     match search_mode {
         BamlSearchOptions::VECTOR => {
             let limit = req.top_k.unwrap_or(DEFAULT_LIMIT as i32).max(1) as usize;
-            match get_embedding(&req.query).await {
+            match ai::embed_text(&req.query).await {
                 Ok(embedding) => {
                     let results = db
                         .get_similar_entries(embedding, limit)
@@ -680,7 +622,7 @@ async fn execute_agent_tool(
     match call.tool {
         SearchToolType::VECTOR_SEARCH => {
             let query = call.query.as_deref().unwrap_or(req.query.as_str());
-            let embedding = get_embedding(query).await?;
+            let embedding = ai::embed_text(query).await?;
             let results = db
                 .get_similar_entries(embedding, limit)
                 .await

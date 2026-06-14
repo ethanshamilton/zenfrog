@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     ingestion::{self, IngestionConfig},
-    models::{Entry, Message, MessageMetadata, Thread},
+    models::{Entry, LogEvent, Message, MessageMetadata, Thread},
 };
 
 use super::{ingest, ingest::JournalRow, DbError, DbResult};
@@ -52,6 +52,7 @@ impl Db {
     pub async fn startup_ingest(&self) -> DbResult<()> {
         self.ensure_threads_table().await?;
         self.ensure_messages_table().await?;
+        self.ensure_log_events_table().await?;
         if self.config.ingest_on_startup {
             ingestion::run_startup_pipeline(&IngestionConfig {
                 journal_dir: self.config.journal_dir.clone(),
@@ -281,6 +282,60 @@ impl Db {
         Ok(messages)
     }
 
+    pub async fn create_log_event(&self, mut event: LogEvent) -> DbResult<LogEvent> {
+        if event.text.trim().is_empty() {
+            return Err(DbError::InvalidData(
+                "log event text cannot be empty".to_string(),
+            ));
+        }
+        if event.datetime.trim().is_empty() {
+            event.datetime = Utc::now().to_rfc3339();
+        }
+        event.log_event_id = Uuid::new_v4().to_string();
+
+        let table = self.conn.open_table("log_events").execute().await?;
+        table
+            .add(log_event_batch(&[event.clone()])?)
+            .execute()
+            .await?;
+        Ok(event)
+    }
+
+    pub async fn list_log_events(
+        &self,
+        order: Option<String>,
+        limit: Option<usize>,
+        tags: Option<Vec<String>>,
+    ) -> DbResult<Vec<LogEvent>> {
+        let table = self.conn.open_table("log_events").execute().await?;
+        let stream = table.query().execute().await?;
+        let batches = stream.try_collect::<Vec<_>>().await?;
+        let required_tags = tags.unwrap_or_default();
+        let mut events = log_events_from_batches(&batches)?
+            .into_iter()
+            .filter(|event| {
+                required_tags
+                    .iter()
+                    .all(|tag| event.tags.iter().any(|event_tag| event_tag == tag))
+            })
+            .collect::<Vec<_>>();
+
+        match order.as_deref().unwrap_or("descending") {
+            "ascending" | "asc" => events.sort_by(|a, b| a.datetime.cmp(&b.datetime)),
+            "descending" | "desc" => events.sort_by(|a, b| b.datetime.cmp(&a.datetime)),
+            other => {
+                return Err(DbError::InvalidData(format!(
+                    "invalid log event order: {other}"
+                )))
+            }
+        }
+
+        if let Some(limit) = limit {
+            events.truncate(limit);
+        }
+        Ok(events)
+    }
+
     async fn ensure_threads_table(&self) -> DbResult<()> {
         if self.table_exists("threads").await? {
             return Ok(());
@@ -299,6 +354,18 @@ impl Db {
         }
         self.conn
             .create_empty_table("messages", message_schema())
+            .mode(CreateTableMode::Create)
+            .execute()
+            .await?;
+        Ok(())
+    }
+
+    async fn ensure_log_events_table(&self) -> DbResult<()> {
+        if self.table_exists("log_events").await? {
+            return Ok(());
+        }
+        self.conn
+            .create_empty_table("log_events", log_event_schema())
             .mode(CreateTableMode::Create)
             .execute()
             .await?;
@@ -563,6 +630,19 @@ fn message_schema() -> Arc<Schema> {
     ]))
 }
 
+fn log_event_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("log_event_id", DataType::Utf8, false),
+        Field::new("datetime", DataType::Utf8, false),
+        Field::new("text", DataType::Utf8, false),
+        Field::new(
+            "tags",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            true,
+        ),
+    ]))
+}
+
 fn thread_batch(threads: &[Thread]) -> DbResult<Box<dyn arrow_array::RecordBatchReader + Send>> {
     let schema = thread_schema();
     let tags = threads
@@ -664,6 +744,43 @@ fn message_batch(messages: &[Message]) -> DbResult<Box<dyn arrow_array::RecordBa
     Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
 }
 
+fn log_event_batch(
+    events: &[LogEvent],
+) -> DbResult<Box<dyn arrow_array::RecordBatchReader + Send>> {
+    let schema = log_event_schema();
+    let tags = events
+        .iter()
+        .map(|event| event.tags.clone())
+        .collect::<Vec<_>>();
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(
+                events
+                    .iter()
+                    .map(|event| event.log_event_id.as_str())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+            Arc::new(StringArray::from(
+                events
+                    .iter()
+                    .map(|event| event.datetime.as_str())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+            Arc::new(StringArray::from(
+                events
+                    .iter()
+                    .map(|event| event.text.as_str())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+            string_list_array(&tags),
+        ],
+    )?;
+
+    Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
+}
+
 fn string_list_array(rows: &[Vec<String>]) -> ArrayRef {
     let values = StringBuilder::new();
     let mut builder = ListBuilder::new(values);
@@ -726,6 +843,26 @@ fn messages_from_batches(batches: &[RecordBatch]) -> DbResult<Vec<Message>> {
         }
     }
     Ok(messages)
+}
+
+fn log_events_from_batches(batches: &[RecordBatch]) -> DbResult<Vec<LogEvent>> {
+    let mut events = Vec::new();
+    for batch in batches {
+        let log_event_ids = string_column(batch, "log_event_id")?;
+        let datetimes = string_column(batch, "datetime")?;
+        let texts = string_column(batch, "text")?;
+        let tags = list_string_column(batch, "tags")?;
+
+        for i in 0..batch.num_rows() {
+            events.push(LogEvent {
+                log_event_id: string_value(log_event_ids, i),
+                datetime: string_value(datetimes, i),
+                text: string_value(texts, i),
+                tags: list_string_value(tags, i),
+            });
+        }
+    }
+    Ok(events)
 }
 
 fn entries_from_batches(
@@ -901,6 +1038,7 @@ mod tests {
         let names = db.conn.table_names().execute().await.unwrap();
         assert!(names.contains(&"threads".to_string()));
         assert!(names.contains(&"messages".to_string()));
+        assert!(names.contains(&"log_events".to_string()));
     }
 
     #[tokio::test]
@@ -969,6 +1107,76 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn creates_and_lists_log_events() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        let first = db
+            .create_log_event(LogEvent {
+                log_event_id: "frontend-ignored".to_string(),
+                datetime: "2024-01-01T10:00:00Z".to_string(),
+                text: "first".to_string(),
+                tags: vec!["a".to_string(), "b".to_string()],
+            })
+            .await
+            .unwrap();
+        let second = db
+            .create_log_event(LogEvent {
+                log_event_id: String::new(),
+                datetime: "2024-01-02T10:00:00Z".to_string(),
+                text: "second".to_string(),
+                tags: vec!["a".to_string()],
+            })
+            .await
+            .unwrap();
+
+        assert!(!first.log_event_id.is_empty());
+        assert_ne!(first.log_event_id, "frontend-ignored");
+        assert!(!second.log_event_id.is_empty());
+
+        let descending = db
+            .list_log_events(Some("descending".to_string()), None, None)
+            .await
+            .unwrap();
+        assert_eq!(descending.len(), 2);
+        assert_eq!(descending[0].text, "second");
+        assert_eq!(descending[1].text, "first");
+
+        let ascending = db
+            .list_log_events(Some("ascending".to_string()), Some(1), None)
+            .await
+            .unwrap();
+        assert_eq!(ascending.len(), 1);
+        assert_eq!(ascending[0].text, "first");
+
+        let tagged = db
+            .list_log_events(None, None, Some(vec!["a".to_string(), "b".to_string()]))
+            .await
+            .unwrap();
+        assert_eq!(tagged.len(), 1);
+        assert_eq!(tagged[0].text, "first");
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_log_event_text() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        let error = db
+            .create_log_event(LogEvent {
+                log_event_id: String::new(),
+                datetime: "2024-01-01T10:00:00Z".to_string(),
+                text: "   ".to_string(),
+                tags: vec![],
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("text cannot be empty"));
     }
 
     #[tokio::test]

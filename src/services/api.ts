@@ -16,6 +16,15 @@ export interface RetrievedDoc {
   distance: number | null
 }
 
+export interface LogEvent {
+  log_event_id?: string
+  datetime: string
+  text: string
+  tags: string[]
+}
+
+export type LogEventOrder = 'ascending' | 'descending'
+
 export interface ChatRequest {
   query: string
   top_k?: number
@@ -98,6 +107,18 @@ export const apiService = {
         metadata,
       },
     })
+  },
+
+  async createLogEvent(event: LogEvent): Promise<LogEvent> {
+    return invoke('create_log_event', { event })
+  },
+
+  async listLogEvents(args: {
+    order?: LogEventOrder
+    limit?: number
+    tags?: string[]
+  } = {}): Promise<LogEvent[]> {
+    return invoke('list_log_events', args)
   },
 
   async queryJournalStream(

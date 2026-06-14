@@ -196,6 +196,29 @@ async fn add_message_to_thread(
 }
 
 #[tauri::command]
+async fn create_log_event(state: State<'_, DbState>, event: LogEvent) -> Result<LogEvent, String> {
+    state
+        .db
+        .create_log_event(event)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_log_events(
+    state: State<'_, DbState>,
+    order: Option<String>,
+    limit: Option<usize>,
+    tags: Option<Vec<String>>,
+) -> Result<Vec<LogEvent>, String> {
+    state
+        .db
+        .list_log_events(order, limit, tags)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn update_thread_title(
     state: State<'_, DbState>,
     thread_id: String,
@@ -298,6 +321,8 @@ pub fn run() {
             get_thread,
             get_thread_messages,
             add_message_to_thread,
+            create_log_event,
+            list_log_events,
             update_thread_title,
             generate_thread_title,
             delete_thread,

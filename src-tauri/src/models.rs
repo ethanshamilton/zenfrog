@@ -92,6 +92,15 @@ pub struct Entry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEvent {
+    #[serde(default)]
+    pub log_event_id: String,
+    pub datetime: String,
+    pub text: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievedDoc {
     pub entry: Entry,
     pub distance: Option<f64>,

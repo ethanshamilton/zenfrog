@@ -63,16 +63,23 @@ pub async fn embed_text(text: &str) -> Result<Vec<f64>, String> {
     parsed
         .embedding
         .map(|embedding| embedding.values)
-        .or_else(|| parsed.embeddings.and_then(|mut embeddings| embeddings.pop().map(|e| e.values)))
+        .or_else(|| {
+            parsed
+                .embeddings
+                .and_then(|mut embeddings| embeddings.pop().map(|e| e.values))
+        })
         .filter(|values| !values.is_empty())
         .ok_or_else(|| "embedding API returned no values".to_string())
 }
 
-pub async fn transcribe_image_data_urls(image_data_urls: &[String], tags: &str) -> Result<String, String> {
+pub async fn transcribe_image_data_urls(
+    image_data_urls: &[String],
+    tags: &str,
+) -> Result<String, String> {
     let api_key = std::env::var("OPENAI_API_KEY")
         .map_err(|_| "OPENAI_API_KEY is required for transcription".to_string())?;
-    let model = std::env::var("ZENFROG_TRANSCRIPTION_MODEL")
-        .unwrap_or_else(|_| "gpt-4o".to_string());
+    let model =
+        std::env::var("ZENFROG_TRANSCRIPTION_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
     let client = reqwest::Client::new();
     let mut chunks = Vec::new();
 

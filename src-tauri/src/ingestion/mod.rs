@@ -1,4 +1,9 @@
-use std::{collections::{BTreeSet, HashMap}, fs, path::{Path, PathBuf}, process::Command};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use regex::Regex;
@@ -6,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::{ai, db::{DbError, DbResult}};
+use crate::{
+    ai,
+    db::{DbError, DbResult},
+};
 
 const PAGE_TEMPLATE_PREFIX: &str = "#day\n### Page\n";
 
@@ -37,7 +45,9 @@ struct EmbeddingLine {
 
 pub async fn run_startup_pipeline(config: &IngestionConfig) -> DbResult<()> {
     let Some(embeddings_path) = config.embeddings_path.as_deref() else {
-        eprintln!("[ingestion] ZENFROG_EMBEDDINGS_PATH unset; skipping transcription/embedding pipeline");
+        eprintln!(
+            "[ingestion] ZENFROG_EMBEDDINGS_PATH unset; skipping transcription/embedding pipeline"
+        );
         return Ok(());
     };
 
@@ -48,7 +58,10 @@ pub async fn run_startup_pipeline(config: &IngestionConfig) -> DbResult<()> {
         fs::write(embeddings_path, "")?;
     }
 
-    let tags = collect_tags(config.journal_dir.as_deref(), config.evergreen_dir.as_deref())?;
+    let tags = collect_tags(
+        config.journal_dir.as_deref(),
+        config.evergreen_dir.as_deref(),
+    )?;
 
     if let Some(journal_dir) = config.journal_dir.as_deref() {
         if journal_dir.exists() {
@@ -61,7 +74,10 @@ pub async fn run_startup_pipeline(config: &IngestionConfig) -> DbResult<()> {
             transcribe_daily_docs(&daily.to_transcribe, &tags).await?;
             embed_daily_docs(&daily.to_embed, embeddings_path).await?;
         } else {
-            eprintln!("[ingestion] journal dir does not exist, skipping: {}", journal_dir.display());
+            eprintln!(
+                "[ingestion] journal dir does not exist, skipping: {}",
+                journal_dir.display()
+            );
         }
     }
 
@@ -71,7 +87,10 @@ pub async fn run_startup_pipeline(config: &IngestionConfig) -> DbResult<()> {
             eprintln!("[ingestion] evergreen crawl: {} to embed", evergreen.len());
             embed_evergreen_docs(&evergreen, embeddings_path).await?;
         } else {
-            eprintln!("[ingestion] evergreen dir does not exist, skipping: {}", evergreen_dir.display());
+            eprintln!(
+                "[ingestion] evergreen dir does not exist, skipping: {}",
+                evergreen_dir.display()
+            );
         }
     }
 
@@ -88,7 +107,10 @@ fn crawl_daily_entries(root: &Path) -> DbResult<DailyCrawlResult> {
             continue;
         };
         if !md_path.exists() {
-            let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+            let filename = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
             fs::write(&md_path, format!("{PAGE_TEMPLATE_PREFIX}![[{filename}]]\n"))?;
             eprintln!("[ingestion] created markdown stub: {}", md_path.display());
         }
@@ -105,7 +127,9 @@ fn crawl_daily_entries(root: &Path) -> DbResult<DailyCrawlResult> {
             result.to_embed.push(md_path);
         }
     }
-    result.to_transcribe.sort_by(|a, b| a.markdown_path.cmp(&b.markdown_path));
+    result
+        .to_transcribe
+        .sort_by(|a, b| a.markdown_path.cmp(&b.markdown_path));
     result.to_embed.sort();
     result.to_embed.dedup();
     Ok(result)
@@ -130,14 +154,24 @@ async fn transcribe_daily_docs(jobs: &[TranscriptionJob], tags: &str) -> DbResul
 
 async fn embed_daily_docs(files: &[PathBuf], embeddings_path: &Path) -> DbResult<()> {
     for (idx, file) in files.iter().enumerate() {
-        eprintln!("[ingestion] embedding daily {}/{}: {}", idx + 1, files.len(), file.display());
+        eprintln!(
+            "[ingestion] embedding daily {}/{}: {}",
+            idx + 1,
+            files.len(),
+            file.display()
+        );
         let content = fs::read_to_string(file)?;
         let transcription = extract_transcription(&content);
         if transcription.trim().is_empty() {
-            eprintln!("[ingestion] skipping daily embedding with empty transcription: {}", file.display());
+            eprintln!(
+                "[ingestion] skipping daily embedding with empty transcription: {}",
+                file.display()
+            );
             continue;
         }
-        let embedding = ai::embed_text(&transcription).await.map_err(DbError::InvalidData)?;
+        let embedding = ai::embed_text(&transcription)
+            .await
+            .map_err(DbError::InvalidData)?;
         upsert_embedding(embeddings_path, &canonical_or_original(file), embedding)?;
         update_frontmatter_field(file, "embedding", "True")?;
     }
@@ -171,7 +205,12 @@ fn crawl_evergreen_entries(root: &Path) -> DbResult<Vec<(PathBuf, String)>> {
 
 async fn embed_evergreen_docs(files: &[(PathBuf, String)], embeddings_path: &Path) -> DbResult<()> {
     for (idx, (file, hash)) in files.iter().enumerate() {
-        eprintln!("[ingestion] embedding evergreen {}/{}: {}", idx + 1, files.len(), file.display());
+        eprintln!(
+            "[ingestion] embedding evergreen {}/{}: {}",
+            idx + 1,
+            files.len(),
+            file.display()
+        );
         let content = fs::read_to_string(file)?;
         let body = strip_frontmatter(&content).trim().to_string();
         if body.is_empty() {
@@ -206,7 +245,10 @@ fn collect_files(path: &Path, out: &mut Vec<PathBuf>) -> DbResult<()> {
 
 fn is_journal_source(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).as_deref(),
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
         Some("pdf" | "png" | "jpg" | "jpeg")
     )
 }
@@ -249,9 +291,12 @@ fn update_frontmatter_field(path: &Path, field: &str, value: &str) -> DbResult<(
     let content = fs::read_to_string(path).unwrap_or_default();
     let mut frontmatter = parse_frontmatter(&content);
     let body = strip_frontmatter(&content);
-    frontmatter.insert(field.to_string(), serde_yaml::Value::String(value.to_string()));
-    let yaml = serde_yaml::to_string(&frontmatter)
-        .map_err(|err| DbError::InvalidData(err.to_string()))?;
+    frontmatter.insert(
+        field.to_string(),
+        serde_yaml::Value::String(value.to_string()),
+    );
+    let yaml =
+        serde_yaml::to_string(&frontmatter).map_err(|err| DbError::InvalidData(err.to_string()))?;
     fs::write(path, format!("---\n{yaml}---\n{body}"))?;
     Ok(())
 }
@@ -298,7 +343,13 @@ fn insert_transcription(path: &Path, transcription: &str) -> DbResult<()> {
             })
             .find_map(|(offset, line)| line.trim_start().starts_with('#').then_some(offset))
             .unwrap_or(after.len());
-        format!("{}{}\n{}\n\n{}", &body[..after_start], "", transcription, &after[end..])
+        format!(
+            "{}{}\n{}\n\n{}",
+            &body[..after_start],
+            "",
+            transcription,
+            &after[end..]
+        )
     } else {
         let sep = if body.ends_with('\n') { "" } else { "\n" };
         format!("{body}{sep}\n{header}\n{transcription}\n")
@@ -314,16 +365,32 @@ fn frontmatter_body_start(content: &str) -> usize {
     }
     content[3..]
         .find("---")
-        .map(|idx| 3 + idx + 3 + content[3 + idx + 3..].chars().take_while(|c| *c == '\n').map(char::len_utf8).sum::<usize>())
+        .map(|idx| {
+            3 + idx
+                + 3
+                + content[3 + idx + 3..]
+                    .chars()
+                    .take_while(|c| *c == '\n')
+                    .map(char::len_utf8)
+                    .sum::<usize>()
+        })
         .unwrap_or(0)
 }
 
 fn encode_entry(path: &Path) -> DbResult<Vec<String>> {
-    match path.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("pdf") => encode_pdf(path),
         Some("jpg" | "jpeg") => encode_image_file(path, "image/jpeg").map(|one| vec![one]),
         Some("png") => encode_image_file(path, "image/png").map(|one| vec![one]),
-        _ => Err(DbError::InvalidData(format!("unsupported transcription source: {}", path.display()))),
+        _ => Err(DbError::InvalidData(format!(
+            "unsupported transcription source: {}",
+            path.display()
+        ))),
     }
 }
 
@@ -351,7 +418,10 @@ fn encode_pdf(path: &Path) -> DbResult<Vec<String>> {
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("png"))
         .collect::<Vec<_>>();
     pages.sort();
-    pages.into_iter().map(|p| encode_image_file(&p, "image/png")).collect()
+    pages
+        .into_iter()
+        .map(|p| encode_image_file(&p, "image/png"))
+        .collect()
 }
 
 fn collect_tags(journal_dir: Option<&Path>, evergreen_dir: Option<&Path>) -> DbResult<String> {
@@ -391,7 +461,10 @@ fn upsert_embedding(path: &Path, doc_path: &Path, embedding: Vec<f64>) -> DbResu
             }
         }
     }
-    rows.push(EmbeddingLine { path: doc_path, embedding });
+    rows.push(EmbeddingLine {
+        path: doc_path,
+        embedding,
+    });
     let mut output = String::new();
     for row in rows {
         output.push_str(&json!(row).to_string());
@@ -428,7 +501,10 @@ mod tests {
         fs::write(&path, "hello").unwrap();
         update_frontmatter_field(&path, "embedding", "True").unwrap();
         let content = fs::read_to_string(&path).unwrap();
-        assert!(frontmatter_is_true(&parse_frontmatter(&content), "embedding"));
+        assert!(frontmatter_is_true(
+            &parse_frontmatter(&content),
+            "embedding"
+        ));
         assert_eq!(strip_frontmatter(&content), "hello");
     }
 

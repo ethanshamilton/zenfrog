@@ -88,6 +88,42 @@ button.home-list-item:hover {
   border-left-color: #666;
 }
 
+.recent-entry-item {
+  cursor: pointer;
+}
+
+.recent-entry-item.expanded {
+  border-color: #ff8800;
+  background: #1f1f1f;
+}
+
+.recent-entry-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.recent-entry-caret {
+  flex: 0 0 auto;
+  color: #ff8800;
+}
+
+.recent-entry-preview {
+  margin: 0.35rem 0 0;
+  color: #aaa;
+  line-height: 1.4;
+}
+
+.recent-entry-full-text {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #333;
+  color: #ddd;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .home-composer {
   flex: 0 0 auto;
   padding: 1rem;

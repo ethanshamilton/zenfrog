@@ -24,9 +24,18 @@ const formatDate = (value: string) => {
   return date.toLocaleDateString()
 }
 
+const makePreview = (text: string, maxLength = 140) => {
+  const normalizedText = text.trim()
+  if (normalizedText.length <= maxLength) return normalizedText
+  return `${normalizedText.slice(0, maxLength).trim()}…`
+}
+
+const getEntryKey = (entry: Entry) => entry.entry_id || `${entry.date}:${entry.title}`
+
 const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => {
   const [promptTime, setPromptTime] = useState(formatPromptTime)
   const [composerText, setComposerText] = useState('')
+  const [expandedEntryIds, setExpandedEntryIds] = useState<Set<string>>(() => new Set())
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   const logsList = useMeasuredRecentList<LogEvent>({
@@ -67,6 +76,18 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
     textarea.style.height = 'auto'
     textarea.style.height = `${textarea.scrollHeight}px`
   }, [composerText])
+
+  const toggleEntryExpanded = (entryId: string) => {
+    setExpandedEntryIds((current) => {
+      const next = new Set(current)
+      if (next.has(entryId)) {
+        next.delete(entryId)
+      } else {
+        next.add(entryId)
+      }
+      return next
+    })
+  }
 
   return (
     <main className="home-page">
@@ -125,13 +146,32 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
           error={entriesList.error}
           bodyRef={entriesList.bodyRef}
           onRefresh={entriesList.refresh}
-          getItemKey={(entry) => entry.entry_id}
-          renderItem={(entry) => (
-            <div className="home-list-item home-list-item-static">
-              <span>{entry.title || 'Untitled entry'}</span>
-              <small>{formatDate(entry.date)}{entry.tags.length > 0 ? ` · ${entry.tags.join(', ')}` : ''}</small>
-            </div>
-          )}
+          getItemKey={getEntryKey}
+          renderItem={(entry) => {
+            const entryKey = getEntryKey(entry)
+            const isExpanded = expandedEntryIds.has(entryKey)
+
+            return (
+              <button
+                className={`home-list-item recent-entry-item ${isExpanded ? 'expanded' : ''}`}
+                onClick={() => toggleEntryExpanded(entryKey)}
+                aria-expanded={isExpanded}
+              >
+                <div className="recent-entry-title-row">
+                  <span>{entry.title || 'Untitled entry'}</span>
+                  <span className="recent-entry-caret">{isExpanded ? '▾' : '▸'}</span>
+                </div>
+                <small>{formatDate(entry.date)}{entry.tags.length > 0 ? ` · ${entry.tags.join(', ')}` : ''}</small>
+                {entry.text && (
+                  isExpanded ? (
+                    <div className="recent-entry-full-text">{entry.text}</div>
+                  ) : (
+                    <p className="recent-entry-preview">{makePreview(entry.text)}</p>
+                  )
+                )}
+              </button>
+            )
+          }}
         />
       </section>
 

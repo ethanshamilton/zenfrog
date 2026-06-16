@@ -323,9 +323,14 @@
 
 .log-page-event-tags {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
   margin-left: 1ch;
   color: #666;
   font-size: 0.85em;
+  line-height: 1.2;
   white-space: nowrap;
 }
 

@@ -361,7 +361,13 @@ const LogPage = ({
                         <time dateTime={log.datetime}>{formatLogPromptTime(log.datetime)} &gt;</time>
                       </button>
                       <span className="log-page-event-text">{log.text}</span>
-                      {log.tags.length > 0 && <small className="log-page-event-tags">{log.tags.join(', ')}</small>}
+                      {log.tags.length > 0 && (
+                        <small className="log-page-event-tags">
+                          {log.tags.map((tag) => (
+                            <span key={tag}>{tag}</span>
+                          ))}
+                        </small>
+                      )}
                     </p>
                     {activeActionLogEventId === log.log_event_id && (
                       <div className="log-page-log-action-menu" onClick={(event) => event.stopPropagation()}>

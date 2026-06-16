@@ -301,9 +301,9 @@ fn extract_transcription(text: &str) -> String {
 
 fn extract_tags(text: &str) -> Vec<String> {
     let mut tags = HashSet::new();
-    for token in text.split(|c: char| {
-        !(c.is_alphanumeric() || c == '_' || c == '-' || c == '/' || c == '#')
-    }) {
+    for token in
+        text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-' || c == '/' || c == '#'))
+    {
         if token.len() > 1 && token.starts_with('#') {
             let mut chars = token.chars();
             let _hash = chars.next();
@@ -316,11 +316,7 @@ fn extract_tags(text: &str) -> Vec<String> {
             let tag = token
                 .chars()
                 .take_while(|c| {
-                    *c == '#'
-                        || c.is_alphanumeric()
-                        || *c == '_'
-                        || *c == '-'
-                        || *c == '/'
+                    *c == '#' || c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '/'
                 })
                 .collect::<String>();
             if tag.len() > 1 {

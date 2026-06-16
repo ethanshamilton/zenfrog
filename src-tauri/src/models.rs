@@ -107,6 +107,28 @@ pub struct TagSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct TaxonomyTag {
+    pub tag: String,
+    pub description: String,
+    pub color: Option<String>,
+    #[serde(default)]
+    pub broader: Vec<String>,
+    #[serde(default)]
+    pub narrower: Vec<String>,
+    #[serde(default)]
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct UpdateTaxonomyTagRequest {
+    pub tag: String,
+    pub description: Option<String>,
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievedDoc {
     pub entry: Entry,
     pub distance: Option<f64>,

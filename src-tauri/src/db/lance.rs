@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use arrow_array::{
     builder::{ListBuilder, StringBuilder},
@@ -19,7 +23,7 @@ use uuid::Uuid;
 
 use crate::{
     ingestion::{self, IngestionConfig},
-    models::{Entry, LogEvent, Message, MessageMetadata, TagSummary, Thread},
+    models::{Entry, LogEvent, Message, MessageMetadata, TagSummary, TaxonomyTag, Thread},
 };
 
 use super::{ingest, ingest::JournalRow, DbError, DbResult};
@@ -53,6 +57,7 @@ impl Db {
         self.ensure_threads_table().await?;
         self.ensure_messages_table().await?;
         self.ensure_log_events_table().await?;
+        self.ensure_taxonomy_table().await?;
         if self.config.ingest_on_startup {
             ingestion::run_startup_pipeline(&IngestionConfig {
                 journal_dir: self.config.journal_dir.clone(),
@@ -62,6 +67,7 @@ impl Db {
             .await?;
         }
         self.incremental_journal_ingest().await?;
+        self.sync_taxonomy().await?;
         Ok(())
     }
 
@@ -428,6 +434,7 @@ impl Db {
             .add(log_event_batch(&[event.clone()])?)
             .execute()
             .await?;
+        self.sync_taxonomy().await?;
         Ok(event)
     }
 
@@ -440,11 +447,9 @@ impl Db {
 
         let table = self.conn.open_table("log_events").execute().await?;
         table
-            .delete(&format!(
-                "log_event_id = '{}'",
-                escape_sql(&log_event_id)
-            ))
+            .delete(&format!("log_event_id = '{}'", escape_sql(&log_event_id)))
             .await?;
+        self.sync_taxonomy().await?;
         Ok(())
     }
 
@@ -483,6 +488,85 @@ impl Db {
         Ok(events)
     }
 
+    pub async fn sync_taxonomy(&self) -> DbResult<()> {
+        self.ensure_taxonomy_table().await?;
+
+        let used_tags = self.collect_used_taxonomy_tags().await?;
+        let existing = self.existing_taxonomy_tags().await?;
+        let missing = used_tags
+            .into_iter()
+            .filter(|tag| !existing.contains_key(tag))
+            .map(|tag| TaxonomyTag {
+                tag,
+                description: String::new(),
+                color: None,
+                broader: vec![],
+                narrower: vec![],
+                count: 0,
+            })
+            .collect::<Vec<_>>();
+
+        if !missing.is_empty() {
+            let table = self.conn.open_table("taxonomy").execute().await?;
+            table.add(taxonomy_batch(&missing)?).execute().await?;
+        }
+
+        Ok(())
+    }
+
+    async fn collect_used_taxonomy_tags(&self) -> DbResult<BTreeSet<String>> {
+        let mut tags = BTreeSet::new();
+
+        if self.table_exists("journal").await? {
+            let table = self.conn.open_table("journal").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for (entry, _) in entries_from_batches(&batches, false)? {
+                for tag in entry.tags {
+                    tags.extend(tag_with_ancestors(&tag));
+                }
+            }
+        }
+
+        if self.table_exists("log_events").await? {
+            let table = self.conn.open_table("log_events").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for event in log_events_from_batches(&batches)? {
+                for tag in event.tags {
+                    tags.extend(tag_with_ancestors(&tag));
+                }
+            }
+        }
+
+        if self.table_exists("threads").await? {
+            let table = self.conn.open_table("threads").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for thread in threads_from_batches(&batches)? {
+                for tag in thread.tags.unwrap_or_default() {
+                    tags.extend(tag_with_ancestors(&tag));
+                }
+            }
+        }
+
+        Ok(tags)
+    }
+
+    async fn existing_taxonomy_tags(&self) -> DbResult<HashMap<String, TaxonomyTag>> {
+        if !self.table_exists("taxonomy").await? {
+            return Ok(HashMap::new());
+        }
+
+        let table = self.conn.open_table("taxonomy").execute().await?;
+        let stream = table.query().execute().await?;
+        let batches = stream.try_collect::<Vec<_>>().await?;
+        Ok(taxonomy_tags_from_batches(&batches)?
+            .into_iter()
+            .map(|tag| (tag.tag.clone(), tag))
+            .collect())
+    }
+
     async fn ensure_threads_table(&self) -> DbResult<()> {
         if self.table_exists("threads").await? {
             return Ok(());
@@ -513,6 +597,18 @@ impl Db {
         }
         self.conn
             .create_empty_table("log_events", log_event_schema())
+            .mode(CreateTableMode::Create)
+            .execute()
+            .await?;
+        Ok(())
+    }
+
+    async fn ensure_taxonomy_table(&self) -> DbResult<()> {
+        if self.table_exists("taxonomy").await? {
+            return Ok(());
+        }
+        self.conn
+            .create_empty_table("taxonomy", taxonomy_schema())
             .mode(CreateTableMode::Create)
             .execute()
             .await?;
@@ -752,6 +848,14 @@ fn journal_batch(rows: &[JournalRow]) -> DbResult<Box<dyn arrow_array::RecordBat
     Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
 }
 
+fn taxonomy_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("tag", DataType::Utf8, false),
+        Field::new("description", DataType::Utf8, false),
+        Field::new("color", DataType::Utf8, true),
+    ]))
+}
+
 fn thread_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![
         Field::new("thread_id", DataType::Utf8, false),
@@ -788,6 +892,33 @@ fn log_event_schema() -> Arc<Schema> {
             true,
         ),
     ]))
+}
+
+fn taxonomy_batch(
+    tags: &[TaxonomyTag],
+) -> DbResult<Box<dyn arrow_array::RecordBatchReader + Send>> {
+    let schema = taxonomy_schema();
+    let colors = tags
+        .iter()
+        .map(|tag| tag.color.as_deref())
+        .collect::<Vec<_>>();
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(
+                tags.iter().map(|t| t.tag.as_str()).collect::<Vec<_>>(),
+            )) as ArrayRef,
+            Arc::new(StringArray::from(
+                tags.iter()
+                    .map(|t| t.description.as_str())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+            Arc::new(StringArray::from(colors)) as ArrayRef,
+        ],
+    )?;
+
+    Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
 }
 
 fn thread_batch(threads: &[Thread]) -> DbResult<Box<dyn arrow_array::RecordBatchReader + Send>> {
@@ -940,6 +1071,31 @@ fn string_list_array(rows: &[Vec<String>]) -> ArrayRef {
     Arc::new(builder.finish()) as ArrayRef
 }
 
+fn taxonomy_tags_from_batches(batches: &[RecordBatch]) -> DbResult<Vec<TaxonomyTag>> {
+    let mut tags = Vec::new();
+    for batch in batches {
+        let tag_values = string_column(batch, "tag")?;
+        let descriptions = string_column(batch, "description")?;
+        let colors = string_column(batch, "color")?;
+
+        for i in 0..batch.num_rows() {
+            tags.push(TaxonomyTag {
+                tag: string_value(tag_values, i),
+                description: string_value(descriptions, i),
+                color: if colors.is_null(i) {
+                    None
+                } else {
+                    Some(colors.value(i).to_string())
+                },
+                broader: vec![],
+                narrower: vec![],
+                count: 0,
+            });
+        }
+    }
+    Ok(tags)
+}
+
 fn threads_from_batches(batches: &[RecordBatch]) -> DbResult<Vec<Thread>> {
     let mut threads = Vec::new();
     for batch in batches {
@@ -947,12 +1103,20 @@ fn threads_from_batches(batches: &[RecordBatch]) -> DbResult<Vec<Thread>> {
         let titles = string_column(batch, "title")?;
         let created = string_column(batch, "created_at")?;
         let updated = string_column(batch, "updated_at")?;
+        let tags = batch
+            .schema()
+            .index_of("tags")
+            .ok()
+            .and_then(|_| list_string_column(batch, "tags").ok());
 
         for i in 0..batch.num_rows() {
             threads.push(Thread {
                 thread_id: string_value(thread_ids, i),
                 title: string_value(titles, i),
-                tags: Some(vec![]),
+                tags: Some(
+                    tags.map(|tags| list_string_value(tags, i))
+                        .unwrap_or_default(),
+                ),
                 created_at: string_value(created, i),
                 updated_at: string_value(updated, i),
             });
@@ -1212,6 +1376,40 @@ fn float_value(array: &dyn Array, row: usize) -> f64 {
     }
 }
 
+fn normalize_tag(tag: &str) -> Option<String> {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return None;
+    }
+
+    let tag = tag.trim_start_matches('#');
+    let parts = tag
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("#{}", parts.join("/")))
+    }
+}
+
+fn tag_with_ancestors(tag: &str) -> Vec<String> {
+    let Some(normalized) = normalize_tag(tag) else {
+        return vec![];
+    };
+    let parts = normalized
+        .trim_start_matches('#')
+        .split('/')
+        .collect::<Vec<_>>();
+
+    (1..=parts.len())
+        .map(|end| format!("#{}", parts[..end].join("/")))
+        .collect()
+}
+
 fn escape_sql(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -1219,6 +1417,7 @@ fn escape_sql(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::TryStreamExt;
 
     fn test_config() -> (tempfile::TempDir, DbConfig) {
         let dir = tempfile::tempdir().unwrap();
@@ -1232,6 +1431,23 @@ mod tests {
         (dir, config)
     }
 
+    async fn taxonomy_tags(db: &Db) -> BTreeSet<String> {
+        let table = db.conn.open_table("taxonomy").execute().await.unwrap();
+        let batches = table
+            .query()
+            .execute()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        taxonomy_tags_from_batches(&batches)
+            .unwrap()
+            .into_iter()
+            .map(|tag| tag.tag)
+            .collect()
+    }
+
     #[tokio::test]
     async fn creates_threads_and_messages() {
         let (_dir, config) = test_config();
@@ -1242,6 +1458,7 @@ mod tests {
         assert!(names.contains(&"threads".to_string()));
         assert!(names.contains(&"messages".to_string()));
         assert!(names.contains(&"log_events".to_string()));
+        assert!(names.contains(&"taxonomy".to_string()));
     }
 
     #[tokio::test]
@@ -1365,6 +1582,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_taxonomy_creates_normalized_tags_and_ancestors_from_logs() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        db.create_log_event(LogEvent {
+            log_event_id: String::new(),
+            datetime: "2024-01-01T10:00:00Z".to_string(),
+            text: "played game".to_string(),
+            tags: vec!["Video_Games/Nuclear_Option".to_string()],
+        })
+        .await
+        .unwrap();
+
+        let tags = taxonomy_tags(&db).await;
+        assert!(tags.contains("#Video_Games"));
+        assert!(tags.contains("#Video_Games/Nuclear_Option"));
+    }
+
+    #[tokio::test]
+    async fn sync_taxonomy_preserves_existing_metadata() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        let table = db.conn.open_table("taxonomy").execute().await.unwrap();
+        table
+            .add(
+                taxonomy_batch(&[TaxonomyTag {
+                    tag: "#Work".to_string(),
+                    description: "work stuff".to_string(),
+                    color: Some("#F54927".to_string()),
+                    broader: vec![],
+                    narrower: vec![],
+                    count: 0,
+                }])
+                .unwrap(),
+            )
+            .execute()
+            .await
+            .unwrap();
+
+        db.create_log_event(LogEvent {
+            log_event_id: String::new(),
+            datetime: "2024-01-01T10:00:00Z".to_string(),
+            text: "worked on EK".to_string(),
+            tags: vec!["#Work/EK".to_string()],
+        })
+        .await
+        .unwrap();
+        db.sync_taxonomy().await.unwrap();
+
+        let table = db.conn.open_table("taxonomy").execute().await.unwrap();
+        let batches = table
+            .query()
+            .execute()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        let tags = taxonomy_tags_from_batches(&batches).unwrap();
+        let work = tags.iter().find(|tag| tag.tag == "#Work").unwrap();
+        assert_eq!(work.description, "work stuff");
+        assert_eq!(work.color.as_deref(), Some("#F54927"));
+        assert!(tags.iter().any(|tag| tag.tag == "#Work/EK"));
+    }
+
+    #[tokio::test]
+    async fn sync_taxonomy_collects_thread_tags_and_threads_from_batches_reads_tags() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        let thread = Thread {
+            thread_id: "thread-1".to_string(),
+            title: "Tagged thread".to_string(),
+            tags: Some(vec!["Work/EK".to_string()]),
+            created_at: "2024-01-01T10:00:00Z".to_string(),
+            updated_at: "2024-01-01T10:00:00Z".to_string(),
+        };
+        let table = db.conn.open_table("threads").execute().await.unwrap();
+        table
+            .add(thread_batch(&[thread]).unwrap())
+            .execute()
+            .await
+            .unwrap();
+
+        let stream = table.query().execute().await.unwrap();
+        let batches = stream.try_collect::<Vec<_>>().await.unwrap();
+        let threads = threads_from_batches(&batches).unwrap();
+        assert_eq!(threads[0].tags, Some(vec!["Work/EK".to_string()]));
+
+        db.sync_taxonomy().await.unwrap();
+        let tags = taxonomy_tags(&db).await;
+        assert!(tags.contains("#Work"));
+        assert!(tags.contains("#Work/EK"));
+    }
+
+    #[tokio::test]
     async fn rejects_empty_log_event_text() {
         let (_dir, config) = test_config();
         let db = Db::connect(config).await.unwrap();
@@ -1428,5 +1745,9 @@ mod tests {
             .unwrap();
         assert_eq!(similar.len(), 1);
         assert_eq!(similar[0].0.date, "2024-01-02");
+
+        let taxonomy = taxonomy_tags(&db).await;
+        assert!(taxonomy.contains("#life"));
+        assert!(taxonomy.contains("#work"));
     }
 }

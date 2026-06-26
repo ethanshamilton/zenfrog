@@ -5,7 +5,8 @@ import ChatInterface from './components/ChatInterface'
 import LoadingScreen from './components/LoadingScreen'
 import HomePage from './pages/HomePage'
 import LogPage from './pages/LogPage'
-import NotImplementedPage from './components/NotImplementedPage'
+import SettingsPage from './pages/SettingsPage'
+import TaxonomyPage from './pages/TaxonomyPage'
 import { apiService } from './services/api'
 import type { Document } from './types'
 
@@ -14,6 +15,7 @@ export type AppPage =
   | { name: 'chat'; threadId?: string; initialMessage?: string; autoSend?: boolean; launchId?: string }
   | { name: 'logs'; focusedLogEventId?: string }
   | { name: 'settings' }
+  | { name: 'taxonomy' }
 
 function App() {
   const [documents, setDocuments] = useState<Document[]>([])
@@ -96,10 +98,16 @@ function App() {
         )
       case 'settings':
         return (
-          <NotImplementedPage
-            title="Settings"
-            description="App configuration will live here."
+          <SettingsPage
             onBackHome={() => setPage({ name: 'home' })}
+            onOpenTaxonomy={() => setPage({ name: 'taxonomy' })}
+          />
+        )
+      case 'taxonomy':
+        return (
+          <TaxonomyPage
+            onBackHome={() => setPage({ name: 'home' })}
+            onOpenSettings={() => setPage({ name: 'settings' })}
           />
         )
     }

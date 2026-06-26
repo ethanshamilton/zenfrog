@@ -1,8 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
-import { apiService, type TagSummary } from '../services/api'
+import { apiService, type TaxonomyTag } from '../services/api'
+
+const normalizeTag = (tag: string) => {
+  const parts = tag
+    .trim()
+    .replace(/^#+/, '')
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  return parts.length > 0 ? `#${parts.join('/')}` : null
+}
+
+const sortTags = (tags: TaxonomyTag[]) =>
+  [...tags].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+
+const makeOptimisticTaxonomyTag = (tag: string, existing?: TaxonomyTag): TaxonomyTag => ({
+  tag,
+  description: existing?.description ?? '',
+  color: existing?.color ?? null,
+  broader: existing?.broader ?? [],
+  narrower: existing?.narrower ?? [],
+  count: (existing?.count ?? 0) + 1,
+})
 
 export function useTagTaxonomy() {
-  const [tags, setTags] = useState<TagSummary[]>([])
+  const [tags, setTags] = useState<TaxonomyTag[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [refreshCount, setRefreshCount] = useState(0)
@@ -14,9 +37,9 @@ export function useTagTaxonomy() {
       try {
         setLoading(true)
         setError(null)
-        const nextTags = await apiService.listTags()
+        const nextTags = await apiService.listTaxonomyTags()
         if (!cancelled) {
-          setTags(nextTags)
+          setTags(sortTags(nextTags))
         }
       } catch (err) {
         if (!cancelled) {
@@ -42,19 +65,16 @@ export function useTagTaxonomy() {
 
   const addOptimisticTags = useCallback((newTags: string[]) => {
     setTags((currentTags) => {
-      const byTag = new Map(currentTags.map((summary) => [summary.tag, summary]))
+      const byTag = new Map(currentTags.map((taxonomyTag) => [taxonomyTag.tag, taxonomyTag]))
 
-      for (const tag of newTags) {
-        const existing = byTag.get(tag)
-        byTag.set(tag, {
-          tag,
-          count: existing ? existing.count + 1 : 1,
-        })
+      for (const rawTag of newTags) {
+        const tag = normalizeTag(rawTag)
+        if (!tag) continue
+
+        byTag.set(tag, makeOptimisticTaxonomyTag(tag, byTag.get(tag)))
       }
 
-      return Array.from(byTag.values()).sort((a, b) =>
-        b.count - a.count || a.tag.localeCompare(b.tag),
-      )
+      return sortTags(Array.from(byTag.values()))
     })
   }, [])
 

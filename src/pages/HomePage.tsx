@@ -1,7 +1,9 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import HomeComposer from '../components/HomeComposer'
 import RecentListPanel from '../components/RecentListPanel'
+import TagLabel from '../components/TagLabel'
 import { useMeasuredRecentList } from '../hooks/useMeasuredRecentList'
+import { useResolvedTagColors } from '../hooks/useResolvedTagColors'
 import { useTagTaxonomy } from '../hooks/useTagTaxonomy'
 import { apiService, type Entry, type LogEvent } from '../services/api'
 import type { Thread } from '../types'
@@ -81,6 +83,21 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
     estimateItemHeight: 88,
   })
 
+  const visibleTags = useMemo(
+    () => [
+      ...logsList.items.flatMap((log) => log.tags),
+      ...threadsList.items.flatMap((thread) => thread.tags ?? []),
+      ...entriesList.items.flatMap((entry) => entry.tags),
+    ],
+    [logsList.items, threadsList.items, entriesList.items],
+  )
+  const getTagColor = useResolvedTagColors(visibleTags)
+  const renderTags = (tags: string[]) => tags.map((tag, index) => (
+    <span key={tag}>
+      {index > 0 ? ', ' : ''}<TagLabel tag={tag} color={getTagColor(tag)} />
+    </span>
+  ))
+
   const toggleEntryExpanded = (entryId: string) => {
     setExpandedEntryIds((current) => {
       const next = new Set(current)
@@ -122,7 +139,7 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
               title={`Open log from ${formatLogDateTime(log.datetime)}`}
             >
               <span>{log.text}</span>
-              <small>{formatLogDateTime(log.datetime)}{log.tags.length > 0 ? ` · ${log.tags.join(', ')}` : ''}</small>
+              <small>{formatLogDateTime(log.datetime)}{log.tags.length > 0 && <> · {renderTags(log.tags)}</>}</small>
             </button>
           )}
         />
@@ -145,7 +162,7 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
               <span>{thread.title}</span>
               <small>
                 Updated {formatDate(thread.updated_at)}
-                {thread.tags && thread.tags.length > 0 ? ` · ${thread.tags.join(', ')}` : ''}
+                {thread.tags && thread.tags.length > 0 && <> · {renderTags(thread.tags)}</>}
               </small>
             </button>
           )}
@@ -175,7 +192,7 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
                   <span>{entry.title || 'Untitled entry'}</span>
                   <span className="recent-entry-caret">{isExpanded ? '▾' : '▸'}</span>
                 </div>
-                <small>{formatDate(entry.date)}{entry.tags.length > 0 ? ` · ${entry.tags.join(', ')}` : ''}</small>
+                <small>{formatDate(entry.date)}{entry.tags.length > 0 && <> · {renderTags(entry.tags)}</>}</small>
                 {entry.text && (
                   isExpanded ? (
                     <div className="recent-entry-full-text">{entry.text}</div>

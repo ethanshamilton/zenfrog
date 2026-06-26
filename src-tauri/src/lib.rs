@@ -5,7 +5,7 @@ mod ingestion;
 mod llm;
 mod models;
 
-use std::{path::PathBuf, sync::Mutex};
+use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
 use db::{Db, DbConfig};
 use models::*;
@@ -242,6 +242,74 @@ async fn list_log_events(
 }
 
 #[tauri::command]
+async fn list_taxonomy_tags(state: State<'_, DbState>) -> Result<Vec<TaxonomyTag>, String> {
+    state
+        .db
+        .list_taxonomy_tags()
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn get_taxonomy_tag(state: State<'_, DbState>, tag: String) -> Result<TaxonomyTag, String> {
+    state
+        .db
+        .get_taxonomy_tag(tag.clone())
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| format!("taxonomy tag not found: {tag}"))
+}
+
+#[tauri::command]
+async fn update_taxonomy_tag(
+    state: State<'_, DbState>,
+    req: UpdateTaxonomyTagRequest,
+) -> Result<TaxonomyTag, String> {
+    state
+        .db
+        .update_taxonomy_tag(req)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn rename_taxonomy_tag(
+    state: State<'_, DbState>,
+    req: RenameTaxonomyTagRequest,
+) -> Result<TaxonomyTag, String> {
+    state
+        .db
+        .rename_taxonomy_tag(req.old_tag, req.new_tag)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_tag_instances(
+    state: State<'_, DbState>,
+    tag: String,
+    limit: Option<usize>,
+) -> Result<Vec<TagInstance>, String> {
+    state
+        .db
+        .list_tag_instances(tag, limit)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn resolve_tag_colors(
+    state: State<'_, DbState>,
+    tags: Vec<String>,
+) -> Result<HashMap<String, Option<String>>, String> {
+    state
+        .db
+        .resolve_tag_colors(tags)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn update_thread_title(
     state: State<'_, DbState>,
     thread_id: String,
@@ -354,6 +422,12 @@ pub fn run() {
             create_log_event,
             delete_log_event,
             list_log_events,
+            list_taxonomy_tags,
+            get_taxonomy_tag,
+            update_taxonomy_tag,
+            rename_taxonomy_tag,
+            list_tag_instances,
+            resolve_tag_colors,
             update_thread_title,
             generate_thread_title,
             delete_thread,

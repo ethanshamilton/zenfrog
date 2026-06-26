@@ -124,8 +124,26 @@ pub struct TaxonomyTag {
 #[allow(dead_code)]
 pub struct UpdateTaxonomyTagRequest {
     pub tag: String,
-    pub description: Option<String>,
+    pub description: String,
     pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct RenameTaxonomyTagRequest {
+    pub old_tag: String,
+    pub new_tag: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct TagInstance {
+    pub tag: String,
+    pub source_type: String,
+    pub source_id: String,
+    pub title: Option<String>,
+    pub text: Option<String>,
+    pub datetime: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

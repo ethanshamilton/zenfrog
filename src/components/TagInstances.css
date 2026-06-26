@@ -1,0 +1,73 @@
+.tag-instances {
+  display: grid;
+  gap: 1rem;
+}
+
+.tag-instances-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tag-instances-kicker {
+  margin: 0 0 0.35rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+}
+
+.tag-instances h2 {
+  margin: 0;
+  color: #ff8800;
+  overflow-wrap: anywhere;
+}
+
+.tag-instances-state {
+  margin: 0;
+  color: #888;
+}
+
+.tag-instances-error {
+  color: #ffb357;
+}
+
+.tag-instances-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tag-instance-card {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 8px;
+  padding: 0.85rem;
+  background: #050505;
+}
+
+.tag-instance-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #888;
+  font-size: 0.8rem;
+  text-transform: capitalize;
+}
+
+.tag-instance-card time {
+  text-align: right;
+  text-transform: none;
+}
+
+.tag-instance-card strong {
+  color: white;
+}
+
+.tag-instance-card p {
+  margin: 0;
+  color: #d4d4d8;
+  overflow-wrap: anywhere;
+}

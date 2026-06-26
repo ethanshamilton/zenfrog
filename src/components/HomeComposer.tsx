@@ -1,10 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { apiService, type TagSummary } from '../services/api'
+import { apiService, type TaxonomyTag } from '../services/api'
+import TagLabel from './TagLabel'
+import { createTaxonomyMap, getEffectiveTagColor } from '../utils/tags'
 import './HomeComposer.css'
 
 interface HomeComposerProps {
-  tagSuggestions: TagSummary[]
+  tagSuggestions: TaxonomyTag[]
   onTagsCreated: (tags: string[]) => void
   onLogCreated: () => void
   onOpenChat?: (initialMessage: string) => void
@@ -90,12 +92,13 @@ const HomeComposer = ({
 
   const parsedInput = parseLogInput(composerText)
   const chatMessage = composerText.trim()
+  const taxonomyByTag = useMemo(() => createTaxonomyMap(tagSuggestions), [tagSuggestions])
   const activeTagToken = findActiveTagToken(composerText, caretIndex)
   const matchingTagSuggestions = activeTagToken
     ? tagSuggestions
-        .filter((summary) =>
-          summary.tag.toLowerCase().startsWith(activeTagToken.query.toLowerCase()) &&
-          summary.tag.toLowerCase() !== activeTagToken.query.toLowerCase(),
+        .filter((taxonomyTag) =>
+          taxonomyTag.tag.toLowerCase().startsWith(activeTagToken.query.toLowerCase()) &&
+          taxonomyTag.tag.toLowerCase() !== activeTagToken.query.toLowerCase(),
         )
         .slice(0, 8)
     : []
@@ -376,18 +379,18 @@ const HomeComposer = ({
           />
           {matchingTagSuggestions.length > 0 && (
             <div className="home-tag-suggestions">
-              {matchingTagSuggestions.map((summary, index) => (
+              {matchingTagSuggestions.map((taxonomyTag, index) => (
                 <button
-                  key={summary.tag}
+                  key={taxonomyTag.tag}
                   type="button"
                   className={index === selectedSuggestionIndex ? 'active' : ''}
                   onMouseDown={(event) => {
                     event.preventDefault()
-                    acceptTagSuggestion(summary.tag)
+                    acceptTagSuggestion(taxonomyTag.tag)
                   }}
                 >
-                  <span>{summary.tag}</span>
-                  <small>{summary.count}</small>
+                  <TagLabel tag={taxonomyTag.tag} color={getEffectiveTagColor(taxonomyTag.tag, taxonomyByTag)} />
+                  <small>{taxonomyTag.count}</small>
                 </button>
               ))}
             </div>

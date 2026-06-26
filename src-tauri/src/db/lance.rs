@@ -23,7 +23,10 @@ use uuid::Uuid;
 
 use crate::{
     ingestion::{self, IngestionConfig},
-    models::{Entry, LogEvent, Message, MessageMetadata, TagSummary, TaxonomyTag, Thread},
+    models::{
+        Entry, LogEvent, Message, MessageMetadata, TagInstance, TagSummary, TaxonomyTag, Thread,
+        UpdateTaxonomyTagRequest,
+    },
 };
 
 use super::{ingest, ingest::JournalRow, DbError, DbResult};
@@ -488,6 +491,339 @@ impl Db {
         Ok(events)
     }
 
+    pub async fn list_taxonomy_tags(&self) -> DbResult<Vec<TaxonomyTag>> {
+        self.sync_taxonomy().await?;
+        let rows = self
+            .existing_taxonomy_tags()
+            .await?
+            .into_values()
+            .collect::<Vec<_>>();
+        let counts = self.taxonomy_counts().await?;
+        Ok(enrich_taxonomy_tags(rows, &counts))
+    }
+
+    pub async fn get_taxonomy_tag(&self, tag: String) -> DbResult<Option<TaxonomyTag>> {
+        let tag = normalize_tag_required(&tag)?;
+        Ok(self
+            .list_taxonomy_tags()
+            .await?
+            .into_iter()
+            .find(|row| row.tag == tag))
+    }
+
+    pub async fn update_taxonomy_tag(
+        &self,
+        req: UpdateTaxonomyTagRequest,
+    ) -> DbResult<TaxonomyTag> {
+        let tag = normalize_tag_required(&req.tag)?;
+        self.ensure_taxonomy_table().await?;
+
+        let table = self.conn.open_table("taxonomy").execute().await?;
+        table
+            .delete(&format!("tag = '{}'", escape_sql(&tag)))
+            .await?;
+        table
+            .add(taxonomy_batch(&[TaxonomyTag {
+                tag: tag.clone(),
+                description: req.description,
+                color: req.color,
+                broader: vec![],
+                narrower: vec![],
+                count: 0,
+            }])?)
+            .execute()
+            .await?;
+
+        self.get_taxonomy_tag(tag).await?.ok_or_else(|| {
+            DbError::InvalidData("updated taxonomy tag could not be read".to_string())
+        })
+    }
+
+    pub async fn rename_taxonomy_tag(
+        &self,
+        old_tag: String,
+        new_tag: String,
+    ) -> DbResult<TaxonomyTag> {
+        let old_tag = validate_taxonomy_tag(&old_tag)?;
+        let new_tag = validate_taxonomy_tag(&new_tag)?;
+
+        if old_tag == new_tag {
+            return Err(DbError::InvalidData(
+                "old and new taxonomy tags must differ".to_string(),
+            ));
+        }
+
+        self.rename_source_tags(&old_tag, &new_tag).await?;
+        self.rename_taxonomy_rows(&old_tag, &new_tag).await?;
+        self.sync_taxonomy().await?;
+        self.get_taxonomy_tag(new_tag).await?.ok_or_else(|| {
+            DbError::InvalidData("renamed taxonomy tag could not be read".to_string())
+        })
+    }
+
+    async fn rename_source_tags(&self, old_tag: &str, new_tag: &str) -> DbResult<()> {
+        self.rename_journal_tags(old_tag, new_tag).await?;
+        self.rename_log_event_tags(old_tag, new_tag).await?;
+        self.rename_thread_tags(old_tag, new_tag).await?;
+        Ok(())
+    }
+
+    async fn rename_journal_tags(&self, old_tag: &str, new_tag: &str) -> DbResult<()> {
+        if !self.table_exists("journal").await? {
+            return Ok(());
+        }
+
+        let table = self.conn.open_table("journal").execute().await?;
+        let stream = table.query().execute().await?;
+        let batches = stream.try_collect::<Vec<_>>().await?;
+        let rows = journal_rows_from_batches(&batches)?
+            .into_iter()
+            .filter_map(|mut row| {
+                let (tags, changed) = rename_tags_in_array(row.tags, old_tag, new_tag);
+                if !changed {
+                    return None;
+                }
+                row.tags = tags;
+                Some(row)
+            })
+            .collect::<Vec<_>>();
+
+        for row in &rows {
+            table
+                .delete(&format!("entry_id = '{}'", escape_sql(&row.entry_id)))
+                .await?;
+        }
+        if !rows.is_empty() {
+            table.add(journal_batch(&rows)?).execute().await?;
+        }
+        Ok(())
+    }
+
+    async fn rename_log_event_tags(&self, old_tag: &str, new_tag: &str) -> DbResult<()> {
+        if !self.table_exists("log_events").await? {
+            return Ok(());
+        }
+
+        let table = self.conn.open_table("log_events").execute().await?;
+        let stream = table.query().execute().await?;
+        let batches = stream.try_collect::<Vec<_>>().await?;
+        let events = log_events_from_batches(&batches)?
+            .into_iter()
+            .filter_map(|mut event| {
+                let (tags, changed) = rename_tags_in_array(event.tags, old_tag, new_tag);
+                if !changed {
+                    return None;
+                }
+                event.tags = tags;
+                Some(event)
+            })
+            .collect::<Vec<_>>();
+
+        for event in &events {
+            table
+                .delete(&format!(
+                    "log_event_id = '{}'",
+                    escape_sql(&event.log_event_id)
+                ))
+                .await?;
+        }
+        if !events.is_empty() {
+            table.add(log_event_batch(&events)?).execute().await?;
+        }
+        Ok(())
+    }
+
+    async fn rename_thread_tags(&self, old_tag: &str, new_tag: &str) -> DbResult<()> {
+        if !self.table_exists("threads").await? {
+            return Ok(());
+        }
+
+        let table = self.conn.open_table("threads").execute().await?;
+        let stream = table.query().execute().await?;
+        let batches = stream.try_collect::<Vec<_>>().await?;
+        let threads = threads_from_batches(&batches)?
+            .into_iter()
+            .filter_map(|mut thread| {
+                let (tags, changed) =
+                    rename_tags_in_array(thread.tags.unwrap_or_default(), old_tag, new_tag);
+                if !changed {
+                    return None;
+                }
+                thread.tags = Some(tags);
+                Some(thread)
+            })
+            .collect::<Vec<_>>();
+
+        for thread in &threads {
+            table
+                .delete(&format!("thread_id = '{}'", escape_sql(&thread.thread_id)))
+                .await?;
+        }
+        if !threads.is_empty() {
+            table.add(thread_batch(&threads)?).execute().await?;
+        }
+        Ok(())
+    }
+
+    async fn rename_taxonomy_rows(&self, old_tag: &str, new_tag: &str) -> DbResult<()> {
+        self.ensure_taxonomy_table().await?;
+        let existing = self.existing_taxonomy_tags().await?;
+        if existing.is_empty() {
+            return Ok(());
+        }
+
+        let mut merged = HashMap::<String, TaxonomyTag>::new();
+        let mut touched = BTreeSet::<String>::new();
+
+        for row in existing.values() {
+            if !is_tag_or_descendant(&row.tag, old_tag) {
+                merged.insert(row.tag.clone(), row.clone());
+            }
+        }
+
+        for row in existing.values() {
+            let Some(target) = rename_tag_path(&row.tag, old_tag, new_tag) else {
+                continue;
+            };
+            touched.insert(row.tag.clone());
+            touched.insert(target.clone());
+
+            let mut renamed = row.clone();
+            renamed.tag = target.clone();
+            renamed.broader = vec![];
+            renamed.narrower = vec![];
+            renamed.count = 0;
+
+            if let Some(destination) = merged.remove(&target) {
+                merged.insert(
+                    target.clone(),
+                    merge_taxonomy_metadata(destination, renamed),
+                );
+            } else {
+                merged.insert(target.clone(), renamed);
+            }
+        }
+
+        let rows_to_add = touched
+            .iter()
+            .filter_map(|tag| merged.get(tag).cloned())
+            .collect::<Vec<_>>();
+
+        let table = self.conn.open_table("taxonomy").execute().await?;
+        for tag in touched {
+            table
+                .delete(&format!("tag = '{}'", escape_sql(&tag)))
+                .await?;
+        }
+        if !rows_to_add.is_empty() {
+            table.add(taxonomy_batch(&rows_to_add)?).execute().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn resolve_tag_colors(
+        &self,
+        tags: Vec<String>,
+    ) -> DbResult<HashMap<String, Option<String>>> {
+        self.ensure_taxonomy_table().await?;
+        let taxonomy = self.existing_taxonomy_tags().await?;
+        let mut resolved = HashMap::new();
+
+        for tag in tags {
+            let Some(normalized) = normalize_tag(&tag) else {
+                continue;
+            };
+            if resolved.contains_key(&normalized) {
+                continue;
+            }
+
+            let mut current = Some(normalized.clone());
+            let mut color = None;
+            while let Some(candidate) = current {
+                if let Some(taxonomy_tag) = taxonomy.get(&candidate) {
+                    if taxonomy_tag.color.is_some() {
+                        color = taxonomy_tag.color.clone();
+                        break;
+                    }
+                }
+                current = parent_tag(&candidate);
+            }
+
+            resolved.insert(normalized, color);
+        }
+
+        Ok(resolved)
+    }
+
+    pub async fn list_tag_instances(
+        &self,
+        tag: String,
+        limit: Option<usize>,
+    ) -> DbResult<Vec<TagInstance>> {
+        let tag = normalize_tag_required(&tag)?;
+        let mut instances = Vec::new();
+
+        if self.table_exists("log_events").await? {
+            let table = self.conn.open_table("log_events").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for event in log_events_from_batches(&batches)? {
+                if tags_contain(&event.tags, &tag) {
+                    instances.push(TagInstance {
+                        tag: tag.clone(),
+                        source_type: "log_event".to_string(),
+                        source_id: event.log_event_id,
+                        title: None,
+                        text: Some(event.text),
+                        datetime: Some(event.datetime),
+                    });
+                }
+            }
+        }
+
+        if self.table_exists("journal").await? {
+            let table = self.conn.open_table("journal").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for (entry, _) in entries_from_batches(&batches, false)? {
+                if tags_contain(&entry.tags, &tag) {
+                    instances.push(TagInstance {
+                        tag: tag.clone(),
+                        source_type: "journal".to_string(),
+                        source_id: entry.entry_id,
+                        title: Some(entry.title),
+                        text: Some(entry.text),
+                        datetime: Some(entry.date),
+                    });
+                }
+            }
+        }
+
+        if self.table_exists("threads").await? {
+            let table = self.conn.open_table("threads").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for thread in threads_from_batches(&batches)? {
+                if tags_contain(&thread.tags.clone().unwrap_or_default(), &tag) {
+                    instances.push(TagInstance {
+                        tag: tag.clone(),
+                        source_type: "thread".to_string(),
+                        source_id: thread.thread_id,
+                        title: Some(thread.title),
+                        text: None,
+                        datetime: Some(thread.updated_at),
+                    });
+                }
+            }
+        }
+
+        instances.sort_by(|a, b| b.datetime.cmp(&a.datetime));
+        if let Some(limit) = limit {
+            instances.truncate(limit);
+        }
+        Ok(instances)
+    }
+
     pub async fn sync_taxonomy(&self) -> DbResult<()> {
         self.ensure_taxonomy_table().await?;
 
@@ -551,6 +887,51 @@ impl Db {
         }
 
         Ok(tags)
+    }
+
+    async fn taxonomy_counts(&self) -> DbResult<HashMap<String, usize>> {
+        let mut counts = HashMap::new();
+
+        if self.table_exists("journal").await? {
+            let table = self.conn.open_table("journal").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for (entry, _) in entries_from_batches(&batches, false)? {
+                for tag in entry.tags {
+                    if let Some(tag) = normalize_tag(&tag) {
+                        *counts.entry(tag).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        if self.table_exists("log_events").await? {
+            let table = self.conn.open_table("log_events").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for event in log_events_from_batches(&batches)? {
+                for tag in event.tags {
+                    if let Some(tag) = normalize_tag(&tag) {
+                        *counts.entry(tag).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        if self.table_exists("threads").await? {
+            let table = self.conn.open_table("threads").execute().await?;
+            let stream = table.query().execute().await?;
+            let batches = stream.try_collect::<Vec<_>>().await?;
+            for thread in threads_from_batches(&batches)? {
+                for tag in thread.tags.unwrap_or_default() {
+                    if let Some(tag) = normalize_tag(&tag) {
+                        *counts.entry(tag).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(counts)
     }
 
     async fn existing_taxonomy_tags(&self) -> DbResult<HashMap<String, TaxonomyTag>> {
@@ -1376,6 +1757,117 @@ fn float_value(array: &dyn Array, row: usize) -> f64 {
     }
 }
 
+fn enrich_taxonomy_tags(
+    mut tags: Vec<TaxonomyTag>,
+    counts: &HashMap<String, usize>,
+) -> Vec<TaxonomyTag> {
+    let tag_names = tags.iter().map(|tag| tag.tag.clone()).collect::<Vec<_>>();
+
+    for tag in &mut tags {
+        tag.broader = parent_tag(&tag.tag).into_iter().collect();
+        tag.narrower = tag_names
+            .iter()
+            .filter(|candidate| parent_tag(candidate).as_deref() == Some(tag.tag.as_str()))
+            .cloned()
+            .collect();
+        tag.narrower.sort();
+        tag.count = counts.get(&tag.tag).copied().unwrap_or(0);
+    }
+
+    tags.sort_by(|a, b| a.tag.cmp(&b.tag));
+    tags
+}
+
+fn parent_tag(tag: &str) -> Option<String> {
+    let tag = normalize_tag(tag)?;
+    let parts = tag.trim_start_matches('#').split('/').collect::<Vec<_>>();
+    if parts.len() <= 1 {
+        None
+    } else {
+        Some(format!("#{}", parts[..parts.len() - 1].join("/")))
+    }
+}
+
+fn tags_contain(tags: &[String], target: &str) -> bool {
+    tags.iter()
+        .filter_map(|tag| normalize_tag(tag))
+        .any(|tag| tag == target)
+}
+
+fn normalize_tag_required(tag: &str) -> DbResult<String> {
+    normalize_tag(tag).ok_or_else(|| DbError::InvalidData("tag cannot be empty".to_string()))
+}
+
+fn validate_taxonomy_tag(tag: &str) -> DbResult<String> {
+    let raw = tag.trim();
+    if raw.is_empty() {
+        return Err(DbError::InvalidData("tag cannot be empty".to_string()));
+    }
+
+    let without_hash = raw.strip_prefix('#').unwrap_or(raw);
+    let parts = without_hash.split('/').collect::<Vec<_>>();
+    if parts.is_empty()
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || part.chars().any(char::is_whitespace))
+    {
+        return Err(DbError::InvalidData(format!("invalid taxonomy tag: {tag}")));
+    }
+
+    Ok(format!("#{}", parts.join("/")))
+}
+
+fn is_tag_or_descendant(tag: &str, prefix: &str) -> bool {
+    tag == prefix
+        || tag
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn rename_tag_path(tag: &str, old_tag: &str, new_tag: &str) -> Option<String> {
+    if tag == old_tag {
+        return Some(new_tag.to_string());
+    }
+    tag.strip_prefix(old_tag)
+        .filter(|rest| rest.starts_with('/'))
+        .map(|rest| format!("{new_tag}{rest}"))
+}
+
+fn rename_tags_in_array(tags: Vec<String>, old_tag: &str, new_tag: &str) -> (Vec<String>, bool) {
+    let mut changed = false;
+    let mut renamed = BTreeSet::new();
+
+    for tag in tags {
+        let Some(normalized) = normalize_tag(&tag) else {
+            changed = true;
+            continue;
+        };
+        let next = rename_tag_path(&normalized, old_tag, new_tag).unwrap_or(normalized.clone());
+        if next != tag || next != normalized {
+            changed = true;
+        }
+        renamed.insert(next);
+    }
+
+    let out = renamed.into_iter().collect::<Vec<_>>();
+    (out, changed)
+}
+
+fn merge_taxonomy_metadata(destination: TaxonomyTag, incoming: TaxonomyTag) -> TaxonomyTag {
+    TaxonomyTag {
+        tag: destination.tag,
+        description: if destination.description.trim().is_empty() {
+            incoming.description
+        } else {
+            destination.description
+        },
+        color: destination.color.or(incoming.color),
+        broader: vec![],
+        narrower: vec![],
+        count: 0,
+    }
+}
+
 fn normalize_tag(tag: &str) -> Option<String> {
     let tag = tag.trim();
     if tag.is_empty() {
@@ -1679,6 +2171,284 @@ mod tests {
         let tags = taxonomy_tags(&db).await;
         assert!(tags.contains("#Work"));
         assert!(tags.contains("#Work/EK"));
+    }
+
+    #[tokio::test]
+    async fn list_taxonomy_tags_returns_rich_tags_with_direct_children() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        db.create_log_event(LogEvent {
+            log_event_id: String::new(),
+            datetime: "2024-01-01T10:00:00Z".to_string(),
+            text: "taxonomy shape".to_string(),
+            tags: vec!["#A/B".to_string(), "#A/C/D".to_string()],
+        })
+        .await
+        .unwrap();
+
+        let tags = db.list_taxonomy_tags().await.unwrap();
+        let get = |name: &str| tags.iter().find(|tag| tag.tag == name).unwrap();
+
+        assert_eq!(get("#A").broader, Vec::<String>::new());
+        assert_eq!(get("#A").narrower, vec!["#A/B", "#A/C"]);
+        assert_eq!(get("#A/B").broader, vec!["#A"]);
+        assert_eq!(get("#A/B").narrower, Vec::<String>::new());
+        assert_eq!(get("#A/C").broader, vec!["#A"]);
+        assert_eq!(get("#A/C").narrower, vec!["#A/C/D"]);
+        assert_eq!(get("#A/C/D").broader, vec!["#A/C"]);
+        assert_eq!(get("#A/C/D").narrower, Vec::<String>::new());
+        assert_eq!(get("#A/B").count, 1);
+        assert_eq!(get("#A").count, 0);
+    }
+
+    #[tokio::test]
+    async fn update_taxonomy_tag_persists_description_and_nullable_color() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        let updated = db
+            .update_taxonomy_tag(UpdateTaxonomyTagRequest {
+                tag: "Work/EK".to_string(),
+                description: "EK work".to_string(),
+                color: Some("#F54927".to_string()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(updated.tag, "#Work/EK");
+        assert_eq!(updated.description, "EK work");
+        assert_eq!(updated.color.as_deref(), Some("#F54927"));
+
+        let cleared = db
+            .update_taxonomy_tag(UpdateTaxonomyTagRequest {
+                tag: "#Work/EK".to_string(),
+                description: "EK work".to_string(),
+                color: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(cleared.color, None);
+
+        let read = db
+            .get_taxonomy_tag("Work/EK".to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(read.description, "EK work");
+        assert_eq!(read.color, None);
+    }
+
+    #[tokio::test]
+    async fn resolve_tag_colors_inherits_from_ancestors() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        db.update_taxonomy_tag(UpdateTaxonomyTagRequest {
+            tag: "#Work".to_string(),
+            description: "".to_string(),
+            color: Some("#0000FF".to_string()),
+        })
+        .await
+        .unwrap();
+        db.update_taxonomy_tag(UpdateTaxonomyTagRequest {
+            tag: "#Work/EK".to_string(),
+            description: "".to_string(),
+            color: None,
+        })
+        .await
+        .unwrap();
+
+        let colors = db
+            .resolve_tag_colors(vec!["Work/EK/Deep".to_string(), "Other".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            colors.get("#Work/EK/Deep"),
+            Some(&Some("#0000FF".to_string()))
+        );
+        assert_eq!(colors.get("#Other"), Some(&None));
+    }
+
+    #[tokio::test]
+    async fn list_tag_instances_sorts_newest_first() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        for (datetime, text) in [
+            ("2024-01-01T10:00:00Z", "first"),
+            ("2024-01-03T10:00:00Z", "third"),
+            ("2024-01-02T10:00:00Z", "second"),
+        ] {
+            db.create_log_event(LogEvent {
+                log_event_id: String::new(),
+                datetime: datetime.to_string(),
+                text: text.to_string(),
+                tags: vec!["A".to_string()],
+            })
+            .await
+            .unwrap();
+        }
+
+        let instances = db.list_tag_instances("#A".to_string(), None).await.unwrap();
+        assert_eq!(instances.len(), 3);
+        assert_eq!(
+            instances[0].datetime.as_deref(),
+            Some("2024-01-03T10:00:00Z")
+        );
+        assert_eq!(
+            instances[1].datetime.as_deref(),
+            Some("2024-01-02T10:00:00Z")
+        );
+        assert_eq!(
+            instances[2].datetime.as_deref(),
+            Some("2024-01-01T10:00:00Z")
+        );
+        assert!(instances
+            .iter()
+            .all(|instance| instance.source_type == "log_event"));
+
+        let limited = db
+            .list_tag_instances("A".to_string(), Some(2))
+            .await
+            .unwrap();
+        assert_eq!(limited.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn rename_taxonomy_tag_moves_metadata() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        db.update_taxonomy_tag(UpdateTaxonomyTagRequest {
+            tag: "Old".to_string(),
+            description: "old metadata".to_string(),
+            color: Some("#123456".to_string()),
+        })
+        .await
+        .unwrap();
+
+        let renamed = db
+            .rename_taxonomy_tag("Old".to_string(), "New".to_string())
+            .await
+            .unwrap();
+        assert_eq!(renamed.tag, "#New");
+        assert_eq!(renamed.description, "old metadata");
+        assert_eq!(renamed.color.as_deref(), Some("#123456"));
+    }
+
+    #[tokio::test]
+    async fn rename_taxonomy_tag_rewrites_source_tags_descendants_and_dedupes() {
+        let (_dir, config) = test_config();
+        let db = Db::connect(config).await.unwrap();
+        db.startup_ingest().await.unwrap();
+
+        let log = db
+            .create_log_event(LogEvent {
+                log_event_id: String::new(),
+                datetime: "2024-01-01T10:00:00Z".to_string(),
+                text: "rename me".to_string(),
+                tags: vec![
+                    "#Old".to_string(),
+                    "#Old/Sub".to_string(),
+                    "#New/Sub".to_string(),
+                ],
+            })
+            .await
+            .unwrap();
+
+        let threads = db.conn.open_table("threads").execute().await.unwrap();
+        threads
+            .add(
+                thread_batch(&[Thread {
+                    thread_id: "thread-rename".to_string(),
+                    title: "Tagged thread".to_string(),
+                    tags: Some(vec!["Old/Thread".to_string()]),
+                    created_at: "2024-01-01T10:00:00Z".to_string(),
+                    updated_at: "2024-01-01T10:00:00Z".to_string(),
+                }])
+                .unwrap(),
+            )
+            .execute()
+            .await
+            .unwrap();
+
+        db.conn
+            .create_table(
+                "journal",
+                journal_batch(&[JournalRow {
+                    entry_id: "journal-rename".to_string(),
+                    date: "2024-01-01".to_string(),
+                    title: "Journal rename".to_string(),
+                    text: "journal text".to_string(),
+                    tags: vec!["#Old/Journal".to_string()],
+                    embedding: vec![1.0, 0.0],
+                    entry_type: "daily".to_string(),
+                    source_path: "/tmp/journal-rename.md".to_string(),
+                    embedding_key: "/tmp/journal-rename.md".to_string(),
+                    content_hash: "hash".to_string(),
+                    source_mtime_ms: 0,
+                    indexed_at: "2024-01-01T10:00:00Z".to_string(),
+                }])
+                .unwrap(),
+            )
+            .execute()
+            .await
+            .unwrap();
+
+        db.rename_taxonomy_tag("Old".to_string(), "New".to_string())
+            .await
+            .unwrap();
+
+        let log_events = db.list_log_events(None, None, None).await.unwrap();
+        let renamed_log = log_events
+            .iter()
+            .find(|event| event.log_event_id == log.log_event_id)
+            .unwrap();
+        assert_eq!(renamed_log.tags, vec!["#New", "#New/Sub"]);
+
+        let threads = db.conn.open_table("threads").execute().await.unwrap();
+        let thread_batches = threads
+            .query()
+            .execute()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        let renamed_thread = threads_from_batches(&thread_batches)
+            .unwrap()
+            .into_iter()
+            .find(|thread| thread.thread_id == "thread-rename")
+            .unwrap();
+        assert_eq!(renamed_thread.tags, Some(vec!["#New/Thread".to_string()]));
+
+        let journal = db.conn.open_table("journal").execute().await.unwrap();
+        let journal_batches = journal
+            .query()
+            .execute()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        let renamed_journal = journal_rows_from_batches(&journal_batches)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.entry_id == "journal-rename")
+            .unwrap();
+        assert_eq!(renamed_journal.tags, vec!["#New/Journal"]);
+
+        let taxonomy = taxonomy_tags(&db).await;
+        assert!(taxonomy.contains("#New"));
+        assert!(taxonomy.contains("#New/Sub"));
+        assert!(taxonomy.contains("#New/Thread"));
+        assert!(taxonomy.contains("#New/Journal"));
+        assert!(!taxonomy.iter().any(|tag| tag.starts_with("#Old")));
     }
 
     #[tokio::test]

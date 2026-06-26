@@ -26,9 +26,33 @@ export interface LogEvent extends CreateLogEventInput {
   log_event_id: string
 }
 
-export interface TagSummary {
+export interface TaxonomyTag {
   tag: string
+  description: string
+  color: string | null
+  broader: string[]
+  narrower: string[]
   count: number
+}
+
+export interface UpdateTaxonomyTagInput {
+  tag: string
+  description: string
+  color: string | null
+}
+
+export interface RenameTaxonomyTagInput {
+  old_tag: string
+  new_tag: string
+}
+
+export interface TagInstance {
+  tag: string
+  source_type: 'journal' | 'log_event' | 'thread' | string
+  source_id: string
+  title: string | null
+  text: string | null
+  datetime: string | null
 }
 
 export type LogEventOrder = 'ascending' | 'descending'
@@ -121,8 +145,28 @@ export const apiService = {
     return invoke('get_recent_entries', { n })
   },
 
-  async listTags(): Promise<TagSummary[]> {
-    return invoke('list_tags')
+  async listTaxonomyTags(): Promise<TaxonomyTag[]> {
+    return invoke('list_taxonomy_tags')
+  },
+
+  async getTaxonomyTag(tag: string): Promise<TaxonomyTag> {
+    return invoke('get_taxonomy_tag', { tag })
+  },
+
+  async updateTaxonomyTag(req: UpdateTaxonomyTagInput): Promise<TaxonomyTag> {
+    return invoke('update_taxonomy_tag', { req })
+  },
+
+  async renameTaxonomyTag(req: RenameTaxonomyTagInput): Promise<TaxonomyTag> {
+    return invoke('rename_taxonomy_tag', { req })
+  },
+
+  async listTagInstances(tag: string, limit?: number): Promise<TagInstance[]> {
+    return invoke('list_tag_instances', { tag, limit })
+  },
+
+  async resolveTagColors(tags: string[]): Promise<Record<string, string | null>> {
+    return invoke('resolve_tag_colors', { tags })
   },
 
   async deleteTag(tag: string): Promise<void> {

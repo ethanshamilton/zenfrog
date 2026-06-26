@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import HomeComposer from '../components/HomeComposer'
+import TagLabel from '../components/TagLabel'
+import { useResolvedTagColors } from '../hooks/useResolvedTagColors'
 import { useTagTaxonomy } from '../hooks/useTagTaxonomy'
 import { apiService, type LogEvent } from '../services/api'
 import './LogPage.css'
@@ -165,11 +167,20 @@ const LogPage = ({
     }
   }
 
+  const visibleTags = useMemo(
+    () => [
+      ...selectedTags,
+      ...tagTaxonomy.tags.map((tag) => tag.tag),
+      ...logs.flatMap((log) => log.tags),
+    ],
+    [selectedTags, tagTaxonomy.tags, logs],
+  )
+  const getTagColor = useResolvedTagColors(visibleTags)
   const normalizedTagFilterQuery = tagFilterQuery.trim().toLowerCase()
   const matchingTags = tagTaxonomy.tags
-    .filter((summary) => !selectedTags.includes(summary.tag))
-    .filter((summary) =>
-      normalizedTagFilterQuery.length === 0 || summary.tag.toLowerCase().includes(normalizedTagFilterQuery),
+    .filter((taxonomyTag) => !selectedTags.includes(taxonomyTag.tag))
+    .filter((taxonomyTag) =>
+      normalizedTagFilterQuery.length === 0 || taxonomyTag.tag.toLowerCase().includes(normalizedTagFilterQuery),
     )
     .slice(0, 20)
   const tagFilterLabel = selectedTags.length === 0 ? 'Tags' : `Tags: ${selectedTags.join(', ')}`
@@ -275,7 +286,7 @@ const LogPage = ({
                         onClick={() => removeSelectedTag(tag)}
                         aria-label={`Remove ${tag} filter`}
                       >
-                        <span>{tag}</span>
+                        <TagLabel tag={tag} color={getTagColor(tag)} />
                         <span aria-hidden="true">×</span>
                       </button>
                     ))}
@@ -288,15 +299,15 @@ const LogPage = ({
                   <div className="log-page-tag-filter-empty">No matching tags.</div>
                 ) : (
                   <div className="log-page-tag-filter-results">
-                    {matchingTags.map((summary) => (
+                    {matchingTags.map((taxonomyTag) => (
                       <button
                         className="log-page-tag-filter-option"
                         type="button"
-                        key={summary.tag}
-                        onClick={() => addSelectedTag(summary.tag)}
+                        key={taxonomyTag.tag}
+                        onClick={() => addSelectedTag(taxonomyTag.tag)}
                       >
-                        <span>{summary.tag}</span>
-                        <small>{summary.count}</small>
+                        <TagLabel tag={taxonomyTag.tag} color={getTagColor(taxonomyTag.tag)} />
+                        <small>{taxonomyTag.count}</small>
                       </button>
                     ))}
                   </div>
@@ -364,7 +375,7 @@ const LogPage = ({
                       {log.tags.length > 0 && (
                         <small className="log-page-event-tags">
                           {log.tags.map((tag) => (
-                            <span key={tag}>{tag}</span>
+                            <TagLabel key={tag} tag={tag} color={getTagColor(tag)} />
                           ))}
                         </small>
                       )}

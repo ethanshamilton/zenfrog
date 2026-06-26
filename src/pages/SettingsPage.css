@@ -1,0 +1,54 @@
+.settings-page {
+  min-height: 100vh;
+  background: black;
+  color: white;
+}
+
+.settings-page-body {
+  padding: 2rem;
+}
+
+.settings-page-heading {
+  margin-bottom: 1.25rem;
+}
+
+.settings-page-heading p {
+  margin: 0 0 0.25rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+}
+
+.settings-page-heading h1 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2.4rem);
+}
+
+.settings-page-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: min(100%, 28rem);
+  border: 1px solid #333;
+  border-left: 2px solid #ae5d00;
+  border-radius: 6px;
+  padding: 1rem;
+  background: #050505;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-page-card:hover {
+  border-color: #ff8800;
+}
+
+.settings-page-card span {
+  font-weight: 700;
+}
+
+.settings-page-card small {
+  color: #888;
+}

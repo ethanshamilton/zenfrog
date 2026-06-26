@@ -1,0 +1,105 @@
+.tag-editor {
+  display: grid;
+  gap: 1rem;
+}
+
+.tag-editor-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tag-editor-kicker {
+  margin: 0 0 0.35rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+}
+
+.tag-editor h2 {
+  margin: 0;
+  color: #ff8800;
+  overflow-wrap: anywhere;
+}
+
+.tag-editor-header button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  background: #ae5d00;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tag-editor-header button:hover:not(:disabled) {
+  background: #ff8800;
+}
+
+.tag-editor-header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.tag-editor-field {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.tag-editor-field span,
+.tag-editor-readonly-grid span {
+  color: #888;
+  font-size: 0.85rem;
+}
+
+.tag-editor-field input,
+.tag-editor-field textarea {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: black;
+  color: white;
+  font: inherit;
+}
+
+.tag-editor-field textarea {
+  resize: vertical;
+  min-height: 5rem;
+}
+
+.tag-editor-field input:focus,
+.tag-editor-field textarea:focus {
+  outline: none;
+  border-color: #ff8800;
+}
+
+.tag-editor-readonly-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.tag-editor-readonly-grid div {
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #050505;
+}
+
+.tag-editor-readonly-grid p {
+  margin: 0.35rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.tag-editor-error {
+  margin: 0;
+  color: #ffb357;
+}
+
+@media (max-width: 760px) {
+  .tag-editor-readonly-grid {
+    grid-template-columns: 1fr;
+  }
+}

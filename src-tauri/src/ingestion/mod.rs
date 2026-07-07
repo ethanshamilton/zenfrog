@@ -83,7 +83,7 @@ pub async fn run_startup_pipeline(config: &IngestionConfig) -> DbResult<()> {
 
     if let Some(evergreen_dir) = config.evergreen_dir.as_deref() {
         if evergreen_dir.exists() {
-            let evergreen = crawl_evergreen_entries(evergreen_dir)?;
+            let evergreen = crawl_evergreen_entries(evergreen_dir, embeddings_path)?;
             eprintln!("[ingestion] evergreen crawl: {} to embed", evergreen.len());
             embed_evergreen_docs(&evergreen, embeddings_path).await?;
         } else {
@@ -178,7 +178,11 @@ async fn embed_daily_docs(files: &[PathBuf], embeddings_path: &Path) -> DbResult
     Ok(())
 }
 
-fn crawl_evergreen_entries(root: &Path) -> DbResult<Vec<(PathBuf, String)>> {
+fn crawl_evergreen_entries(
+    root: &Path,
+    embeddings_path: &Path,
+) -> DbResult<Vec<(PathBuf, String)>> {
+    let known_embeddings = load_embedding_paths(embeddings_path)?;
     let mut out = Vec::new();
     for path in recursive_files(root)? {
         if path.extension().and_then(|s| s.to_str()) != Some("md") {
@@ -195,12 +199,51 @@ fn crawl_evergreen_entries(root: &Path) -> DbResult<Vec<(PathBuf, String)>> {
             .get("content_hash")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if existing != hash {
+        if existing != hash || !embedding_exists_for_file(&known_embeddings, root, &path) {
             out.push((path, hash));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
+}
+
+fn load_embedding_paths(path: &Path) -> DbResult<BTreeSet<String>> {
+    let mut paths = BTreeSet::new();
+    if !path.exists() {
+        return Ok(paths);
+    }
+
+    let content = fs::read_to_string(path)?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let row = serde_json::from_str::<EmbeddingLine>(line)?;
+        if !row.embedding.is_empty() {
+            paths.insert(row.path);
+        }
+    }
+    Ok(paths)
+}
+
+fn embedding_exists_for_file(
+    known_embeddings: &BTreeSet<String>,
+    root: &Path,
+    path: &Path,
+) -> bool {
+    let source_path = path_to_string(path);
+    if known_embeddings.contains(&source_path) {
+        return true;
+    }
+    let canonical_path = canonical_or_original(path);
+    if known_embeddings.contains(&path_to_string(&canonical_path)) {
+        return true;
+    }
+    path.strip_prefix(root)
+        .ok()
+        .map(normalized_path_string)
+        .is_some_and(|rel| known_embeddings.contains(&rel))
 }
 
 async fn embed_evergreen_docs(files: &[(PathBuf, String)], embeddings_path: &Path) -> DbResult<()> {
@@ -484,6 +527,10 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn normalized_path_string(path: impl AsRef<Path>) -> String {
+    path.as_ref().to_string_lossy().replace('\\', "/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +565,41 @@ mod tests {
         let lines = fs::read_to_string(embeddings).unwrap();
         assert_eq!(lines.lines().count(), 1);
         assert!(lines.contains("2.0"));
+    }
+
+    #[test]
+    fn evergreen_crawl_reembeds_when_content_hash_exists_but_embedding_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let evergreen_dir = dir.path().join("Evergreen");
+        fs::create_dir_all(&evergreen_dir).unwrap();
+        let doc = evergreen_dir.join("Note.md");
+        let body = "important evergreen body";
+        let hash = compute_content_hash(body);
+        fs::write(
+            &doc,
+            format!("---\ncontent_hash: {hash}\nembedding: True\n---\n{body}"),
+        )
+        .unwrap();
+        let embeddings = dir.path().join("embeddings.jsonl");
+        fs::write(&embeddings, "").unwrap();
+
+        let to_embed = crawl_evergreen_entries(&evergreen_dir, &embeddings).unwrap();
+        assert_eq!(to_embed, vec![(doc, hash)]);
+    }
+
+    #[test]
+    fn evergreen_crawl_accepts_relative_embedding_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let evergreen_dir = dir.path().join("Evergreen");
+        fs::create_dir_all(&evergreen_dir).unwrap();
+        let doc = evergreen_dir.join("Note.md");
+        let body = "important evergreen body";
+        let hash = compute_content_hash(body);
+        fs::write(&doc, format!("---\ncontent_hash: {hash}\n---\n{body}")).unwrap();
+        let embeddings = dir.path().join("embeddings.jsonl");
+        fs::write(&embeddings, r#"{"path":"Note.md","embedding":[1.0]}"#).unwrap();
+
+        let to_embed = crawl_evergreen_entries(&evergreen_dir, &embeddings).unwrap();
+        assert!(to_embed.is_empty());
     }
 }

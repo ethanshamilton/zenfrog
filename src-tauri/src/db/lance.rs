@@ -462,33 +462,62 @@ impl Db {
         limit: Option<usize>,
         tags: Option<Vec<String>>,
     ) -> DbResult<Vec<LogEvent>> {
-        let table = self.conn.open_table("log_events").execute().await?;
-        let stream = table.query().execute().await?;
-        let batches = stream.try_collect::<Vec<_>>().await?;
-        let required_tags = tags.unwrap_or_default();
-        let mut events = log_events_from_batches(&batches)?
-            .into_iter()
-            .filter(|event| {
-                required_tags
-                    .iter()
-                    .all(|tag| event.tags.iter().any(|event_tag| event_tag == tag))
-            })
-            .collect::<Vec<_>>();
-
-        match order.as_deref().unwrap_or("descending") {
-            "ascending" | "asc" => events.sort_by(|a, b| a.datetime.cmp(&b.datetime)),
-            "descending" | "desc" => events.sort_by(|a, b| b.datetime.cmp(&a.datetime)),
-            other => {
-                return Err(DbError::InvalidData(format!(
-                    "invalid log event order: {other}"
-                )))
-            }
-        }
+        let mut events = self.load_log_events(tags).await?;
+        sort_log_events(&mut events, order.as_deref().unwrap_or("descending"))?;
 
         if let Some(limit) = limit {
             events.truncate(limit);
         }
         Ok(events)
+    }
+
+    pub async fn get_recent_log_events(&self, n: usize) -> DbResult<Vec<LogEvent>> {
+        self.list_log_events(Some("descending".to_string()), Some(n), None)
+            .await
+    }
+
+    pub async fn get_log_events_by_tags(
+        &self,
+        tags: Vec<String>,
+        limit: Option<usize>,
+    ) -> DbResult<Vec<LogEvent>> {
+        self.list_log_events(Some("descending".to_string()), limit, Some(tags))
+            .await
+    }
+
+    pub async fn get_log_events_by_date_range(
+        &self,
+        start_datetime: String,
+        end_datetime: String,
+        limit: Option<usize>,
+        tags: Option<Vec<String>>,
+    ) -> DbResult<Vec<LogEvent>> {
+        let mut events = self
+            .load_log_events(tags)
+            .await?
+            .into_iter()
+            .filter(|event| event.datetime >= start_datetime && event.datetime <= end_datetime)
+            .collect::<Vec<_>>();
+        sort_log_events(&mut events, "descending")?;
+
+        if let Some(limit) = limit {
+            events.truncate(limit);
+        }
+        Ok(events)
+    }
+
+    async fn load_log_events(&self, tags: Option<Vec<String>>) -> DbResult<Vec<LogEvent>> {
+        if !self.table_exists("log_events").await? {
+            return Ok(vec![]);
+        }
+        let table = self.conn.open_table("log_events").execute().await?;
+        let stream = table.query().execute().await?;
+        let batches = stream.try_collect::<Vec<_>>().await?;
+        let required_tags = tags.unwrap_or_default();
+        Ok(log_events_from_batches(&batches)?
+            .into_iter()
+            .filter(|event| log_event_has_tags(event, &required_tags))
+            .collect())
     }
 
     pub async fn list_taxonomy_tags(&self) -> DbResult<Vec<TaxonomyTag>> {
@@ -1346,6 +1375,11 @@ fn compact_message_metadata(mut metadata: MessageMetadata) -> MessageMetadata {
             entry.text = None;
         }
     }
+    for log in &mut metadata.context_logs {
+        if !log.log_event_id.is_empty() {
+            log.text = None;
+        }
+    }
     metadata
 }
 
@@ -1401,6 +1435,25 @@ fn message_batch(messages: &[Message]) -> DbResult<Box<dyn arrow_array::RecordBa
     )?;
 
     Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
+}
+
+fn sort_log_events(events: &mut [LogEvent], order: &str) -> DbResult<()> {
+    match order {
+        "ascending" | "asc" => events.sort_by(|a, b| a.datetime.cmp(&b.datetime)),
+        "descending" | "desc" => events.sort_by(|a, b| b.datetime.cmp(&a.datetime)),
+        other => {
+            return Err(DbError::InvalidData(format!(
+                "invalid log event order: {other}"
+            )))
+        }
+    }
+    Ok(())
+}
+
+fn log_event_has_tags(event: &LogEvent, required_tags: &[String]) -> bool {
+    required_tags
+        .iter()
+        .all(|tag| event.tags.iter().any(|event_tag| event_tag == tag))
 }
 
 fn log_event_batch(
@@ -2071,6 +2124,30 @@ mod tests {
             .unwrap();
         assert_eq!(tagged.len(), 1);
         assert_eq!(tagged[0].text, "first");
+
+        let recent = db.get_recent_log_events(1).await.unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].text, "second");
+
+        let tagged_recent = db
+            .get_log_events_by_tags(vec!["a".to_string()], Some(2))
+            .await
+            .unwrap();
+        assert_eq!(tagged_recent.len(), 2);
+        assert_eq!(tagged_recent[0].text, "second");
+        assert_eq!(tagged_recent[1].text, "first");
+
+        let date_range = db
+            .get_log_events_by_date_range(
+                "2024-01-01T00:00:00Z".to_string(),
+                "2024-01-01T23:59:59Z".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(date_range.len(), 1);
+        assert_eq!(date_range[0].text, "first");
     }
 
     #[tokio::test]

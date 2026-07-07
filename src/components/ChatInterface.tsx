@@ -114,6 +114,26 @@ const MessageMetadataView = ({ metadata, onFlipBack }: { metadata: MessageMetada
       </section>
 
       <section>
+        <h5>Context Logs ({metadata.context_logs.length})</h5>
+        {metadata.context_logs.length === 0 ? (
+          <div className="metadata-muted">No log retrieval context recorded.</div>
+        ) : metadata.context_logs.map((log, idx) => (
+          <details key={`${log.log_event_id}-${idx}`}>
+            <summary>{log.datetime} · {log.tags.join(' ') || 'untagged'}</summary>
+            <div className="metadata-entry-meta">
+              <span>{log.source}</span>
+              <span>{log.log_event_id}</span>
+            </div>
+            {log.text ? (
+              <pre>{log.text}</pre>
+            ) : (
+              <div className="metadata-muted">Stored by log event reference.</div>
+            )}
+          </details>
+        ))}
+      </section>
+
+      <section>
         <h5>Context Chats ({metadata.context_chats.length})</h5>
         {metadata.context_chats.length === 0 ? (
           <div className="metadata-muted">No chat retrieval context recorded.</div>

@@ -52,6 +52,16 @@ pub struct MessageContextEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageContextLogEvent {
+    pub log_event_id: String,
+    pub datetime: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub tags: Vec<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageContextChat {
     pub thread_id: String,
     pub message_id: Option<String>,
@@ -74,8 +84,13 @@ pub struct SearchIteration {
 pub struct MessageMetadata {
     pub model: MessageModelMetadata,
     pub personality: Option<MessagePersonalityMetadata>,
+    #[serde(default)]
     pub context_entries: Vec<MessageContextEntry>,
+    #[serde(default)]
+    pub context_logs: Vec<MessageContextLogEvent>,
+    #[serde(default)]
     pub context_chats: Vec<MessageContextChat>,
+    #[serde(default)]
     pub retrieval_trace: Vec<SearchIteration>,
 }
 

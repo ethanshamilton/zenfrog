@@ -12,8 +12,9 @@ use crate::{
     },
     db::Db,
     models::{
-        ChatRequest, ChatResponse, Entry, Message, MessageContextEntry, MessageMetadata,
-        MessageModelMetadata, MessagePersonalityMetadata, RetrievedDoc, SearchIteration,
+        ChatRequest, ChatResponse, Entry, LogEvent, Message, MessageContextEntry,
+        MessageContextLogEvent, MessageMetadata, MessageModelMetadata, MessagePersonalityMetadata,
+        RetrievedDoc, SearchIteration,
     },
 };
 
@@ -23,10 +24,16 @@ const DEFAULT_LIMIT: usize = 5;
 const MAX_CONTEXT_CHARS: usize = 48_000;
 
 #[derive(Debug, Clone)]
-struct RetrievedEntry {
-    entry: Entry,
-    distance: Option<f64>,
-    source: String,
+enum ContextItem {
+    Entry {
+        entry: Entry,
+        distance: Option<f64>,
+        source: String,
+    },
+    LogEvent {
+        event: LogEvent,
+        source: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -38,50 +45,39 @@ struct Personality {
 
 #[derive(Debug, Default)]
 struct AgentSearchState {
-    entries: HashMap<String, RetrievedEntry>,
+    items: HashMap<String, ContextItem>,
     ordered_keys: Vec<String>,
     search_trace: Vec<SearchIteration>,
 }
 
 impl AgentSearchState {
-    fn key(entry: &Entry) -> String {
-        if entry.entry_id.is_empty() {
-            format!("{}::{}::{}", entry.date, entry.title, entry.entry_type)
-        } else {
-            entry.entry_id.clone()
+    fn key(item: &ContextItem) -> String {
+        match item {
+            ContextItem::Entry { entry, .. } if !entry.entry_id.is_empty() => {
+                format!("entry:{}:{}", entry.entry_type, entry.entry_id)
+            }
+            ContextItem::Entry { entry, .. } => {
+                format!("entry:{}:{}:{}", entry.entry_type, entry.date, entry.title)
+            }
+            ContextItem::LogEvent { event, .. } => format!("log_event:{}", event.log_event_id),
         }
     }
 
-    fn add_entry(
-        &mut self,
-        entry: Entry,
-        distance: Option<f64>,
-        source: impl Into<String>,
-    ) -> bool {
-        let key = Self::key(&entry);
-        if self.entries.contains_key(&key) {
+    fn add_item(&mut self, item: ContextItem) -> bool {
+        let key = Self::key(&item);
+        if self.items.contains_key(&key) {
             return false;
         }
         self.ordered_keys.push(key.clone());
-        self.entries.insert(
-            key,
-            RetrievedEntry {
-                entry,
-                distance,
-                source: source.into(),
-            },
-        );
+        self.items.insert(key, item);
         true
     }
 
-    fn add_entries<I>(&mut self, entries: I, source: impl Into<String> + Clone) -> usize
+    fn add_items<I>(&mut self, items: I) -> usize
     where
-        I: IntoIterator<Item = (Entry, Option<f64>)>,
+        I: IntoIterator<Item = ContextItem>,
     {
-        entries
-            .into_iter()
-            .filter(|(entry, distance)| self.add_entry(entry.clone(), *distance, source.clone()))
-            .count()
+        items.into_iter().filter(|item| self.add_item(item.clone())).count()
     }
 
     fn record_iteration(
@@ -108,32 +104,67 @@ impl AgentSearchState {
     fn context_entries(&self) -> Vec<MessageContextEntry> {
         self.ordered_keys
             .iter()
-            .filter_map(|key| self.entries.get(key))
-            .map(|retrieved| {
-                entry_to_context(&retrieved.entry, retrieved.distance, &retrieved.source)
+            .filter_map(|key| match self.items.get(key) {
+                Some(ContextItem::Entry {
+                    entry,
+                    distance,
+                    source,
+                }) => Some(entry_to_context(entry, *distance, source)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn context_logs(&self) -> Vec<MessageContextLogEvent> {
+        self.ordered_keys
+            .iter()
+            .filter_map(|key| match self.items.get(key) {
+                Some(ContextItem::LogEvent { event, source }) => {
+                    Some(log_event_to_context(event, source))
+                }
+                _ => None,
             })
             .collect()
     }
 
     fn context_string(&self) -> String {
-        let entries = self.context_entries();
         let mut rendered = Vec::new();
         let mut total = 0usize;
 
-        for (idx, entry) in entries.iter().enumerate() {
-            let block = format!(
-                "<ENTRY index=\"{}\" date=\"{}\" title=\"{}\" type=\"{}\" source=\"{}\">\nTags: {}\n{}\n</ENTRY>",
-                idx + 1,
-                entry.date.as_deref().unwrap_or(""),
-                entry.title,
-                entry.entry_type,
-                entry.source,
-                entry.tags.join(", "),
-                entry.text.as_deref().unwrap_or("")
-            );
+        for (idx, key) in self.ordered_keys.iter().enumerate() {
+            let Some(item) = self.items.get(key) else {
+                continue;
+            };
+            let block = match item {
+                ContextItem::Entry {
+                    entry,
+                    distance,
+                    source,
+                } => format!(
+                    "<JOURNAL_ENTRY index=\"{}\" id=\"{}\" date=\"{}\" title=\"{}\" type=\"{}\" source=\"{}\" distance=\"{}\">\nTags: {}\n{}\n</JOURNAL_ENTRY>",
+                    idx + 1,
+                    entry.entry_id,
+                    entry.date,
+                    entry.title,
+                    entry.entry_type,
+                    source,
+                    distance.map(|d| d.to_string()).unwrap_or_default(),
+                    entry.tags.join(", "),
+                    entry.text
+                ),
+                ContextItem::LogEvent { event, source } => format!(
+                    "<LOG_EVENT index=\"{}\" id=\"{}\" datetime=\"{}\" source=\"{}\">\nTags: {}\n{}\n</LOG_EVENT>",
+                    idx + 1,
+                    event.log_event_id,
+                    event.datetime,
+                    source,
+                    event.tags.join(", "),
+                    event.text
+                ),
+            };
             total += block.len();
             if total > MAX_CONTEXT_CHARS {
-                rendered.push("<TRUNCATED>Additional retrieved entries omitted to stay within context limits.</TRUNCATED>".to_string());
+                rendered.push("<TRUNCATED>Additional retrieved context omitted to stay within context limits.</TRUNCATED>".to_string());
                 break;
             }
             rendered.push(block);
@@ -348,6 +379,16 @@ fn entry_to_context(entry: &Entry, distance: Option<f64>, source: &str) -> Messa
     }
 }
 
+fn log_event_to_context(event: &LogEvent, source: &str) -> MessageContextLogEvent {
+    MessageContextLogEvent {
+        log_event_id: event.log_event_id.clone(),
+        datetime: event.datetime.clone(),
+        text: Some(event.text.clone()),
+        tags: event.tags.clone(),
+        source: source.to_string(),
+    }
+}
+
 fn format_entries(entries: &[MessageContextEntry]) -> String {
     entries
         .iter()
@@ -494,6 +535,7 @@ fn response_metadata(
     req: &ChatRequest,
     personality: Option<&Personality>,
     context_entries: Vec<MessageContextEntry>,
+    context_logs: Vec<MessageContextLogEvent>,
     retrieval_trace: Vec<SearchIteration>,
 ) -> MessageMetadata {
     MessageMetadata {
@@ -507,6 +549,7 @@ fn response_metadata(
             prompt: Some(p.prompt.clone()),
         }),
         context_entries,
+        context_logs,
         context_chats: vec![],
         retrieval_trace,
     }
@@ -582,6 +625,7 @@ pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, Stri
             &req,
             personality.as_ref(),
             context_entries,
+            vec![],
             trace,
         )),
     })
@@ -613,7 +657,7 @@ async fn execute_agent_tool(
     db: &Db,
     req: &ChatRequest,
     call: &SearchToolCall,
-) -> Result<Vec<(Entry, Option<f64>)>, String> {
+) -> Result<Vec<ContextItem>, String> {
     let limit = call
         .limit
         .unwrap_or(req.top_k.unwrap_or(DEFAULT_LIMIT as i32) as i64)
@@ -629,7 +673,11 @@ async fn execute_agent_tool(
                 .map_err(|err| err.to_string())?;
             Ok(results
                 .into_iter()
-                .map(|(entry, distance)| (entry, Some(distance)))
+                .map(|(entry, distance)| ContextItem::Entry {
+                    entry,
+                    distance: Some(distance),
+                    source: "vector_search".to_string(),
+                })
                 .collect())
         }
         SearchToolType::RECENT_ENTRIES => {
@@ -637,7 +685,14 @@ async fn execute_agent_tool(
                 .get_recent_entries(limit)
                 .await
                 .map_err(|err| err.to_string())?;
-            Ok(entries.into_iter().map(|entry| (entry, None)).collect())
+            Ok(entries
+                .into_iter()
+                .map(|entry| ContextItem::Entry {
+                    entry,
+                    distance: None,
+                    source: "recent_entries".to_string(),
+                })
+                .collect())
         }
         SearchToolType::DATE_RANGE_SEARCH => {
             let start = call
@@ -652,7 +707,71 @@ async fn execute_agent_tool(
                 .get_entries_by_date_range(start, end, Some(limit))
                 .await
                 .map_err(|err| err.to_string())?;
-            Ok(entries.into_iter().map(|entry| (entry, None)).collect())
+            Ok(entries
+                .into_iter()
+                .map(|entry| ContextItem::Entry {
+                    entry,
+                    distance: None,
+                    source: "date_range_search".to_string(),
+                })
+                .collect())
+        }
+        SearchToolType::RECENT_LOGS => {
+            let events = db
+                .get_recent_log_events(limit)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(events
+                .into_iter()
+                .map(|event| ContextItem::LogEvent {
+                    event,
+                    source: "recent_logs".to_string(),
+                })
+                .collect())
+        }
+        SearchToolType::LOG_DATE_RANGE_SEARCH => {
+            let start = call
+                .start_date
+                .clone()
+                .ok_or_else(|| "LOG_DATE_RANGE_SEARCH missing start_date".to_string())?;
+            let end = call
+                .end_date
+                .clone()
+                .ok_or_else(|| "LOG_DATE_RANGE_SEARCH missing end_date".to_string())?;
+            let events = db
+                .get_log_events_by_date_range(start, end, Some(limit), None)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(events
+                .into_iter()
+                .map(|event| ContextItem::LogEvent {
+                    event,
+                    source: "log_date_range_search".to_string(),
+                })
+                .collect())
+        }
+        SearchToolType::LOG_TAG_SEARCH => {
+            let tag = call
+                .tag
+                .clone()
+                .ok_or_else(|| "LOG_TAG_SEARCH missing tag".to_string())?;
+            let events = db
+                .get_log_events_by_tags(vec![tag], Some(limit))
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(events
+                .into_iter()
+                .map(|event| ContextItem::LogEvent {
+                    event,
+                    source: "log_tag_search".to_string(),
+                })
+                .collect())
+        }
+        SearchToolType::LOG_TAG_DRILLDOWN => {
+            eprintln!(
+                "[llm] LOG_TAG_DRILLDOWN requested but is not implemented yet; returning no context"
+            );
+            Ok(vec![])
         }
         SearchToolType::DONE => Ok(vec![]),
     }
@@ -668,10 +787,11 @@ where
         .get_recent_entries(RECENT_PRESEED_COUNT)
         .await
         .map_err(|err| err.to_string())?;
-    let new_count = state.add_entries(
-        recent_entries.into_iter().map(|entry| (entry, None)),
-        "recent_entries_preseed",
-    );
+    let new_count = state.add_items(recent_entries.into_iter().map(|entry| ContextItem::Entry {
+        entry,
+        distance: None,
+        source: "recent_entries_preseed".to_string(),
+    }));
     let step = state.record_iteration(
         0,
         "RECENT_ENTRIES_PRESEED",
@@ -708,14 +828,12 @@ where
             break;
         }
 
-        let source = tool_name(&call).to_lowercase();
-        let query_for_trace =
-            call.query
-                .clone()
-                .or_else(|| match (&call.start_date, &call.end_date) {
-                    (Some(start), Some(end)) => Some(format!("{start}..{end}")),
-                    _ => None,
-                });
+        let query_for_trace = call.query.clone().or_else(|| {
+            call.tag.clone().or_else(|| match (&call.start_date, &call.end_date) {
+                (Some(start), Some(end)) => Some(format!("{start}..{end}")),
+                _ => None,
+            })
+        });
 
         let results = match execute_agent_tool(db, &req, &call).await {
             Ok(results) => results,
@@ -725,7 +843,7 @@ where
             }
         };
         let results_count = results.len();
-        let new_count = state.add_entries(results, source);
+        let new_count = state.add_items(results);
         let step = state.record_iteration(
             iteration as i32,
             tool_name(&call),
@@ -777,6 +895,7 @@ where
     .map_err(|err| err.to_string())?;
 
     let context_entries = state.context_entries();
+    let context_logs = state.context_logs();
     Ok(ChatResponse {
         response,
         docs: docs_from_context(&context_entries),
@@ -785,6 +904,7 @@ where
             &req,
             personality.as_ref(),
             context_entries,
+            context_logs,
             state.search_trace,
         )),
     })

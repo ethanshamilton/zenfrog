@@ -102,18 +102,23 @@ function DirectChat(messages: string, entries: string, custom_instructions: stri
 // AGENTIC SEARCH LOOP
 
 enum SearchToolType {
-  VECTOR_SEARCH
-  RECENT_ENTRIES
-  DATE_RANGE_SEARCH
-  DONE
+  VECTOR_SEARCH @description("Semantic search over long-form journal entries using embeddings. Best for topical, emotional, conceptual, or fuzzy queries.")
+  RECENT_ENTRIES @description("Retrieve recent long-form journal entries. Best for reflective journal context about what has been happening lately.")
+  DATE_RANGE_SEARCH @description("Retrieve long-form journal entries between explicit dates. Best for months, years, named periods, or user-specified date windows.")
+  RECENT_LOGS @description("Retrieve recent lightweight log events. Best for quick timeline questions, recent activities, and terse logged facts.")
+  LOG_DATE_RANGE_SEARCH @description("Retrieve lightweight log events between explicit dates or datetimes.")
+  LOG_TAG_SEARCH @description("Retrieve lightweight log events matching a specific exact tag.")
+  LOG_TAG_DRILLDOWN @description("Stub for hierarchical log tag exploration. Use when tag-based log retrieval seems appropriate but the exact tag is unclear.")
+  DONE @description("Stop searching because enough relevant context has been gathered or no available search would help.")
 }
 
 class SearchToolCall {
-  tool SearchToolType
+  tool SearchToolType @description("The retrieval tool to call next")
   reasoning string @description("Explain why this tool is needed and what you hope to find")
   query string? @description("Search query for VECTOR_SEARCH")
-  start_date string? @description("Start date for DATE_RANGE_SEARCH (YYYY-MM-DD)")
-  end_date string? @description("End date for DATE_RANGE_SEARCH (YYYY-MM-DD)")
+  start_date string? @description("Start date for DATE_RANGE_SEARCH or LOG_DATE_RANGE_SEARCH. Use YYYY-MM-DD or RFC3339 when available.")
+  end_date string? @description("End date for DATE_RANGE_SEARCH or LOG_DATE_RANGE_SEARCH. Use YYYY-MM-DD or RFC3339 when available.")
+  tag string? @description("Exact tag for LOG_TAG_SEARCH, or candidate/parent tag for LOG_TAG_DRILLDOWN")
   limit int? @description("Optional limit on number of results")
 }
 
@@ -130,10 +135,19 @@ function AgentToolSelector(
     You are an intelligent search agent for a personal journal database. Your task is to select the best search tool to gather relevant journal entries for answering the user's query.
 
     Available tools:
-    - VECTOR_SEARCH: Semantic search using embeddings. Best for finding entries about specific topics, emotions, or concepts. Requires a search query.
-    - RECENT_ENTRIES: Get the most recent journal entries. Best for questions about "lately", "recently", or current state.
-    - DATE_RANGE_SEARCH: Retrieve entries between dates. Best for explicit time windows, comparisons across periods, months, years, or phrases like "last summer". Requires start_date and end_date in YYYY-MM-DD.
+    - VECTOR_SEARCH: Semantic search using embeddings over long-form journal entries. Best for finding entries about specific topics, emotions, or concepts. Requires a search query.
+    - RECENT_ENTRIES: Get the most recent long-form journal entries. Best for reflective questions about "lately", "recently", or current state.
+    - DATE_RANGE_SEARCH: Retrieve long-form journal entries between dates. Best for explicit time windows, comparisons across periods, months, years, or phrases like "last summer". Requires start_date and end_date.
+    - RECENT_LOGS: Get the most recent lightweight log events. Best for quick timeline questions, recent activities, or terse logged facts.
+    - LOG_DATE_RANGE_SEARCH: Retrieve lightweight log events between dates/datetimes. Best when the user asks what was logged in a specific period. Requires start_date and end_date.
+    - LOG_TAG_SEARCH: Retrieve lightweight log events with an exact tag. Requires tag.
+    - LOG_TAG_DRILLDOWN: Currently a stub for hierarchical tag exploration. Use sparingly when exact tag-based log retrieval seems important but the exact tag is unclear. It does not retrieve logs by itself.
     - DONE: Select this when you have gathered enough context to answer the user's query, or if no more searches would be helpful.
+
+    Source distinctions:
+    - Journal entries are long-form reflective writing.
+    - Log events are short timestamped records. Prefer log tools when the user says "logs", "logged", "events", "quick notes", "timeline", or asks what they did at/around a time.
+    - For broad timeline/current-state questions, using both recent journal entries and recent logs can be helpful.
 
     Consider:
     - What information is still missing to fully answer the query?

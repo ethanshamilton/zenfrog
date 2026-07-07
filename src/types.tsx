@@ -43,6 +43,14 @@ export interface MessageContextEntry {
     source: string
 }
 
+export interface MessageContextLogEvent {
+    log_event_id: string
+    datetime: string
+    text?: string | null
+    tags: string[]
+    source: string
+}
+
 export interface MessageContextChat {
     thread_id: string
     message_id?: string | null
@@ -55,6 +63,7 @@ export interface MessageMetadata {
     model: MessageModelMetadata
     personality?: MessagePersonalityMetadata | null
     context_entries: MessageContextEntry[]
+    context_logs: MessageContextLogEvent[]
     context_chats: MessageContextChat[]
     retrieval_trace: SearchIteration[]
 }

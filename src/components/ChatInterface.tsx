@@ -11,7 +11,7 @@ const providers = [
     models: [
       { label: "Claude Fable 5", value: "claude-fable-5" },
       { label: "Claude Opus 4.6", value: "claude-opus-4-6" },
-      { label: "Claude Sonnet 4.6", value: "claude-sonnet-4-6" },
+      { label: "Claude Sonnet 5", value: "claude-sonnet-5" },
     ],
   },
   {

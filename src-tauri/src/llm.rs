@@ -329,6 +329,41 @@ fn selected_client(req: &ChatRequest) -> Option<String> {
     }
 }
 
+fn is_openrouter_request(req: &ChatRequest) -> bool {
+    req.provider.trim().eq_ignore_ascii_case("openrouter")
+}
+
+fn openrouter_client_registry(req: &ChatRequest) -> Result<baml::ClientRegistry, String> {
+    let api_key = std::env::var("OPENROUTER_API_KEY")
+        .map_err(|_| "OPENROUTER_API_KEY is required for OpenRouter models".to_string())?;
+    let app_url = std::env::var("ZENFROG_OPENROUTER_APP_URL")
+        .unwrap_or_else(|_| "https://zenfrog.local".to_string());
+    let app_title = std::env::var("ZENFROG_OPENROUTER_APP_TITLE")
+        .unwrap_or_else(|_| "Zenfrog".to_string());
+    let app_categories = std::env::var("ZENFROG_OPENROUTER_APP_CATEGORIES")
+        .unwrap_or_else(|_| "personal-agent,writing-assistant".to_string());
+
+    let mut registry = baml::ClientRegistry::new();
+    registry.add_llm_client(
+        "ZenfrogOpenRouter",
+        "openrouter",
+        HashMap::from([
+            ("model".to_string(), serde_json::json!(req.model.trim())),
+            ("api_key".to_string(), serde_json::json!(api_key)),
+            (
+                "headers".to_string(),
+                serde_json::json!({
+                    "HTTP-Referer": app_url,
+                    "X-OpenRouter-Title": app_title,
+                    "X-OpenRouter-Categories": app_categories,
+                }),
+            ),
+        ]),
+    );
+    registry.set_primary_client("ZenfrogOpenRouter");
+    Ok(registry)
+}
+
 fn format_message_values(values: &[serde_json::Value]) -> Vec<String> {
     values
         .iter()
@@ -595,7 +630,18 @@ pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, Stri
         .map(|p| p.prompt.as_str())
         .unwrap_or_default();
 
-    let response = if let Some(client) = selected_client(&req) {
+    let response = if is_openrouter_request(&req) {
+        let registry = openrouter_client_registry(&req)?;
+        B.DirectChat
+            .with_client_registry(&registry)
+            .call(
+                messages.as_str(),
+                entries.as_str(),
+                custom_instructions.as_str(),
+                personality_prompt,
+            )
+            .await
+    } else if let Some(client) = selected_client(&req) {
         B.DirectChat
             .with_client(client)
             .call(
@@ -868,7 +914,20 @@ where
         .map(|p| p.prompt.as_str())
         .unwrap_or_default();
 
-    let response = if let Some(client) = selected_client(&req) {
+    let response = if is_openrouter_request(&req) {
+        let registry = openrouter_client_registry(&req)?;
+        B.AgentSynthesizer
+            .with_client_registry(&registry)
+            .call(
+                req.query.as_str(),
+                messages.as_str(),
+                accumulated.as_str(),
+                search_trace.as_str(),
+                custom_instructions.as_str(),
+                personality_prompt,
+            )
+            .await
+    } else if let Some(client) = selected_client(&req) {
         B.AgentSynthesizer
             .with_client(client)
             .call(

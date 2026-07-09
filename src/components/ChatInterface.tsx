@@ -4,7 +4,7 @@ import { apiService } from '../services/api'
 import type { Document as CustomDocument, MessageMetadata, SearchIteration, ThreadMessage } from '../types'
 import ReactMarkdown from 'react-markdown'
 
-const providers = [
+const nativeProviderModels = [
   {
     label: "Anthropic",
     value: "anthropic",
@@ -18,7 +18,9 @@ const providers = [
     label: "OpenAI",
     value: "openai",
     models: [
-      { label: "GPT-5", value: "gpt-5.5" }
+      { label: "GPT-5.6 Sol", value: "gpt-5.6-sol"},
+      { label: "GPT-5.6 Terra", value: "gpt-5.6-terra"},
+      { label: "GPT-5.5", value: "gpt-5.5" }
     ],
   },
   {
@@ -27,6 +29,22 @@ const providers = [
     models: [
       { label: "Gemini 3 Pro", value: "gemini-3-pro-preview" }
     ],
+  },
+]
+
+const openRouterModels = nativeProviderModels.flatMap(provider =>
+  provider.models.map(model => ({
+    label: `${model.label} (${provider.label})`,
+    value: `${provider.value === "google-ai" ? "google" : provider.value}/${model.value}`,
+  }))
+)
+
+const providers = [
+  ...nativeProviderModels,
+  {
+    label: "OpenRouter",
+    value: "openrouter",
+    models: openRouterModels,
   },
 ]
 

@@ -32,15 +32,23 @@ const nativeProviderModels = [
   },
 ]
 
-const openRouterModels = nativeProviderModels.flatMap(provider =>
-  provider.models.map(model => ({
-    label: `${model.label} (${provider.label})`,
-    value: `${provider.value === "google-ai" ? "google" : provider.value}/${model.value}`,
-  }))
-)
+const openRouterModels = [
+  ...nativeProviderModels.flatMap(provider =>
+    provider.models.map(model => ({
+      label: `${model.label} (${provider.label})`,
+      value: `${provider.value === "google-ai" ? "google" : provider.value}/${model.value}`,
+    }))
+  ),
+  { label: "Kimi K3 (Moonshot AI)", value: "moonshotai/kimi-k3" },
+]
 
 const providers = [
   ...nativeProviderModels,
+  {
+    label: "Moonshot AI",
+    value: "moonshot",
+    models: [{ label: "Kimi K3", value: "kimi-k3" }],
+  },
   {
     label: "OpenRouter",
     value: "openrouter",

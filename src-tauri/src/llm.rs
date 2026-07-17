@@ -333,6 +333,28 @@ fn is_openrouter_request(req: &ChatRequest) -> bool {
     req.provider.trim().eq_ignore_ascii_case("openrouter")
 }
 
+fn moonshot_client_registry(req: &ChatRequest) -> Result<baml::ClientRegistry, String> {
+    let api_key = std::env::var("MOONSHOT_API_KEY")
+        .map_err(|_| "MOONSHOT_API_KEY is required for Moonshot AI models".to_string())?;
+
+    let mut registry = baml::ClientRegistry::new();
+    registry.add_llm_client(
+        "ZenfrogMoonshot",
+        "openai-generic",
+        HashMap::from([
+            ("base_url".to_string(), serde_json::json!("https://api.moonshot.ai/v1")),
+            ("model".to_string(), serde_json::json!(req.model.trim())),
+            ("api_key".to_string(), serde_json::json!(api_key)),
+        ]),
+    );
+    registry.set_primary_client("ZenfrogMoonshot");
+    Ok(registry)
+}
+
+fn is_moonshot_request(req: &ChatRequest) -> bool {
+    req.provider.trim().eq_ignore_ascii_case("moonshot")
+}
+
 fn openrouter_client_registry(req: &ChatRequest) -> Result<baml::ClientRegistry, String> {
     let api_key = std::env::var("OPENROUTER_API_KEY")
         .map_err(|_| "OPENROUTER_API_KEY is required for OpenRouter models".to_string())?;
@@ -641,6 +663,17 @@ pub async fn direct_chat(db: &Db, req: ChatRequest) -> Result<ChatResponse, Stri
                 personality_prompt,
             )
             .await
+    } else if is_moonshot_request(&req) {
+        let registry = moonshot_client_registry(&req)?;
+        B.DirectChat
+            .with_client_registry(&registry)
+            .call(
+                messages.as_str(),
+                entries.as_str(),
+                custom_instructions.as_str(),
+                personality_prompt,
+            )
+            .await
     } else if let Some(client) = selected_client(&req) {
         B.DirectChat
             .with_client(client)
@@ -916,6 +949,19 @@ where
 
     let response = if is_openrouter_request(&req) {
         let registry = openrouter_client_registry(&req)?;
+        B.AgentSynthesizer
+            .with_client_registry(&registry)
+            .call(
+                req.query.as_str(),
+                messages.as_str(),
+                accumulated.as_str(),
+                search_trace.as_str(),
+                custom_instructions.as_str(),
+                personality_prompt,
+            )
+            .await
+    } else if is_moonshot_request(&req) {
+        let registry = moonshot_client_registry(&req)?;
         B.AgentSynthesizer
             .with_client_registry(&registry)
             .call(

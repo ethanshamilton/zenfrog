@@ -145,12 +145,13 @@ const HomePage = ({ onOpenChat, onOpenLogs, onOpenSettings }: HomePageProps) => 
         />
 
         <RecentListPanel
-          title="Recent Threads"
+          title="Recent Chats"
           items={threadsList.items}
           loading={threadsList.loading}
           error={threadsList.error}
           bodyRef={threadsList.bodyRef}
           onRefresh={threadsList.refresh}
+          onTitleClick={() => onOpenChat()}
           getItemKey={(thread) => thread.thread_id}
           renderItem={(thread) => (
             <button

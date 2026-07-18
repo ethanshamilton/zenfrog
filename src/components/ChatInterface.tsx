@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import './ChatInterface.css'
 import { apiService } from '../services/api'
 import type { Document as CustomDocument, MessageMetadata, SearchIteration, ThreadMessage } from '../types'
@@ -55,6 +55,22 @@ const providers = [
     models: openRouterModels,
   },
 ]
+
+interface ModelDisplay {
+  model: string
+  variant: string
+}
+
+const modelDisplayById: Record<string, ModelDisplay> = {
+  'claude-fable-5': { model: 'Claude', variant: 'Fable 5' },
+  'claude-opus-4-6': { model: 'Claude', variant: 'Opus 4.6' },
+  'claude-sonnet-5': { model: 'Claude', variant: 'Sonnet 5' },
+  'gpt-5.6-sol': { model: 'GPT-5.6', variant: 'Sol' },
+  'gpt-5.6-terra': { model: 'GPT-5.6', variant: 'Terra' },
+  'gpt-5.5': { model: 'GPT-5.5', variant: '' },
+  'gemini-3-pro-preview': { model: 'Gemini', variant: '3 Pro' },
+  'kimi-k3': { model: 'Kimi', variant: 'K3' },
+}
 
 interface Message {
   id: string
@@ -190,48 +206,80 @@ const MessageMetadataView = ({ metadata, onFlipBack }: { metadata: MessageMetada
   )
 }
 
+const formatMessageTime = (date: Date) =>
+  date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+
+const getModelLeafId = (modelId: string) => {
+  const parts = modelId.split('/').filter(Boolean)
+  return parts[parts.length - 1] || modelId
+}
+
+const getModelDisplay = (modelId: string): ModelDisplay => {
+  const leafId = getModelLeafId(modelId)
+  return modelDisplayById[leafId] ?? { model: leafId, variant: '' }
+}
+
+const ModelPrefixLabel = ({ modelId }: { modelId: string }) => {
+  const display = getModelDisplay(modelId)
+
+  return (
+    <span className="message-model-id" title={modelId}>
+      <span className="message-model-name">{display.model}</span>
+      {display.variant && <span className="message-model-variant">{display.variant}</span>}
+    </span>
+  )
+}
+
 const ChatMessageCard = ({ message }: { message: Message }) => {
-  const [flipped, setFlipped] = useState(false)
+  const [metadataOpen, setMetadataOpen] = useState(false)
   const hasMetadata = Boolean(message.metadata)
-  const pointerStartRef = useRef<{ x: number; y: number } | null>(null)
+  const fullAssistantModelId = message.metadata?.model.model || 'assistant'
 
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    pointerStartRef.current = { x: event.clientX, y: event.clientY }
-  }
-
-  const handleFrontClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!hasMetadata) return
-
-    const selectedText = window.getSelection()?.toString().trim()
-    if (selectedText) return
-
-    const pointerStart = pointerStartRef.current
-    if (pointerStart) {
-      const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y)
-      if (moved > 5) return
-    }
-
-    setFlipped(true)
+  const toggleMetadata = () => {
+    if (!hasMetadata || window.getSelection()?.toString().trim()) return
+    setMetadataOpen((isOpen) => !isOpen)
   }
 
   return (
-    <div className={`message-card ${flipped ? 'flipped' : ''} ${hasMetadata ? 'has-metadata' : ''}`}>
-      {!flipped ? (
-        <div
-          className={`message-content ${hasMetadata ? 'clickable' : ''}`}
-          onPointerDown={handlePointerDown}
-          onClick={handleFrontClick}
-          title={hasMetadata ? 'Click to view metadata' : undefined}
-        >
-          <ReactMarkdown>{message.text}</ReactMarkdown>
-          {hasMetadata && <div className="metadata-hint">click for metadata</div>}
-        </div>
-      ) : (
-        <div className="message-content metadata-content">
-          <MessageMetadataView metadata={message.metadata!} onFlipBack={() => setFlipped(false)} />
-        </div>
-      )}
-    </div>
+    <article className={`message-row ${message.sender}-message ${metadataOpen ? 'focused' : ''}`}>
+      <button
+        type="button"
+        className="message-prefix"
+        onClick={toggleMetadata}
+        disabled={!hasMetadata}
+        title={hasMetadata ? 'Toggle message metadata' : undefined}
+        aria-expanded={hasMetadata ? metadataOpen : undefined}
+      >
+        {message.sender === 'user' ? (
+          <>
+            <span>you</span>
+            <time dateTime={message.timestamp.toISOString()}>{formatMessageTime(message.timestamp)}</time>
+            <span>&lt;</span>
+          </>
+        ) : (
+          <>
+            <time dateTime={message.timestamp.toISOString()}>{formatMessageTime(message.timestamp)}</time>
+            <ModelPrefixLabel modelId={fullAssistantModelId} />
+            <span>&gt;</span>
+          </>
+        )}
+      </button>
+      <div className="message-column">
+        {metadataOpen ? (
+          <div className="metadata-content">
+            <MessageMetadataView metadata={message.metadata!} onFlipBack={() => setMetadataOpen(false)} />
+          </div>
+        ) : (
+          <div
+            className={`message-content ${hasMetadata ? 'clickable' : ''}`}
+            onClick={toggleMetadata}
+            title={hasMetadata ? 'Click to view message metadata' : undefined}
+          >
+            <ReactMarkdown>{message.text}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </article>
   )
 }
 
@@ -249,6 +297,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, threadId, i
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null)
   const [isThreadSaved, setIsThreadSaved] = useState(false)
   const [searchIterations, setSearchIterations] = useState<SearchIteration[]>([])
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const handledLaunchIdsRef = useRef<Set<string>>(new Set())
   const handledInitialMessageRef = useRef<string | null>(null)
 
@@ -421,115 +470,107 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ setDocuments, threadId, i
     }
   }
 
+  useLayoutEffect(() => {
+    const textarea = inputRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`
+  }, [inputText])
+
   return (
     <div className="chat-interface">
-      <div className="chat-header">
-        <div className="chat-title">
-          <h3>Journal Chat</h3>
-          {currentThreadId && (
-            <div className="thread-info">
-              <span className="thread-id">Thread: {currentThreadId.slice(0, 8)}...</span>
-            </div>
-          )}
+      <header className="chat-header" aria-label="Chat toolbar">
+        <div className="chat-toolbar-group">
+          <span className="chat-toolbar-title">Chat</span>
+          <label className="chat-model-control">
+            <span>Model</span>
+            <select
+              value={`${selectedModel.provider}:${selectedModel.model}`}
+              onChange={e => {
+                const [provider, model] = e.target.value.split(":")
+                setSelectedModel({ provider, model })
+              }}
+            >
+              {providers.map(provider => (
+                <optgroup key={provider.value} label={provider.label}>
+                  {provider.models.map(model => (
+                    <option key={model.value} value={`${provider.value}:${model.value}`}>
+                      {model.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <span className="thread-info">
+            {currentThreadId ? `Thread ${currentThreadId.slice(0, 8)}` : 'Unsaved thread'}
+          </span>
         </div>
         <div className="chat-actions">
-          {!isThreadSaved && (
-            <button onClick={saveChat} className="save-chat-btn">
-              Save Chat
-            </button>
-          )}
-          <button onClick={startNewChat} className="new-chat-btn">
-            New Chat
-          </button>
+          {!isThreadSaved && <button onClick={saveChat}>Save</button>}
+          <button onClick={startNewChat}>New Chat</button>
         </div>
-        <select
-          value={`${selectedModel.provider}:${selectedModel.model}`}
-          onChange={e => {
-            const[provider, model] = e.target.value.split(":");
-            setSelectedModel({ provider, model })
-          }}
-        >
-          {providers.map(provider => (
-            <optgroup key={provider.value} label={provider.label}>
-              {provider.models.map(model => (
-                <option
-                  key={model.value}
-                  value={`${provider.value}:${model.value}`}
-                >
-                  {model.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </div>
+      </header>
       
-      <div className="chat-messages">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`message ${message.sender === 'user' ? 'user-message' : 'bot-message'}`}
-          >
-            <ChatMessageCard message={message} />
-            <div className="message-timestamp">
-              {message.timestamp.toLocaleTimeString()}
-            </div>
-          </div>
-        ))}
-        {isLoading && (
-          <div className="message bot-message">
-            <div className="message-content loading">
-              {searchIterations.length > 0 ? (
-                <div className="thinking-panel">
-                  {searchIterations.map((iter, idx) => (
-                    <div key={idx} className="iteration-card">
-                      <div className="iteration-header">
-                        <span className="iteration-tool">{iter.tool}</span>
-                        {iter.query && <span className="iteration-query">"{iter.query}"</span>}
-                        <span className="iteration-meta">
-                          {iter.results_count} results, {iter.new_entries_added} new
-                        </span>
+      <section className="chat-messages" aria-label="Chat transcript">
+        <div className="chat-transcript">
+          {messages.map((message) => <ChatMessageCard key={message.id} message={message} />)}
+          {isLoading && (
+            <div className="message-row assistant-message loading-row">
+              <div className="message-prefix static-prefix">
+                <span>··:··</span>
+                <ModelPrefixLabel modelId={selectedModel.model} />
+                <span>&gt;</span>
+              </div>
+              <div className="message-column">
+                {searchIterations.length > 0 ? (
+                  <div className="thinking-panel">
+                    {searchIterations.map((iter, idx) => (
+                      <div key={idx} className="iteration-card">
+                        <div className="iteration-header">
+                          <span className="iteration-tool">{iter.tool}</span>
+                          {iter.query && <span className="iteration-query">"{iter.query}"</span>}
+                          <span className="iteration-meta">
+                            {iter.results_count} results, {iter.new_entries_added} new
+                          </span>
+                        </div>
+                        <div className="iteration-reasoning">{iter.reasoning}</div>
                       </div>
-                      <div className="iteration-reasoning">{iter.reasoning}</div>
-                    </div>
-                  ))}
-                  <div className="typing-indicator">
-                    <span></span>
-                    <span></span>
-                    <span></span>
+                    ))}
+                    <div className="typing-indicator"><span></span><span></span><span></span></div>
                   </div>
-                </div>
-              ) : (
-                <div className="typing-indicator">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-              )}
+                ) : (
+                  <div className="typing-indicator"><span></span><span></span><span></span></div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-      
-      <div className="chat-input">
+          )}
+        </div>
+      </section>
+
+      <footer className="chat-input" aria-label="Chat composer">
         <div className="input-container">
-          <textarea
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Ask a question about your documents..."
-            rows={3}
-            disabled={isLoading}
-          />
+          <div className="chat-terminal-input">
+            <span className="chat-terminal-prompt">you &gt;</span>
+            <textarea
+              ref={inputRef}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={handleKeyPress}
+              placeholder="Ask your journal..."
+              rows={1}
+              disabled={isLoading}
+            />
+          </div>
           <button
             onClick={() => sendMessage()}
             disabled={!inputText.trim() || isLoading}
             className="send-button"
           >
-            Chat
+            [Chat]
           </button>
         </div>
-      </div>
+      </footer>
     </div>
   )
 }

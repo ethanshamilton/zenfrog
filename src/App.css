@@ -2,7 +2,7 @@
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #181a20;
+  background: black;
   color: #eaeaea;
 }
 
@@ -11,6 +11,6 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: #23262f;
+  background: black;
 }
 

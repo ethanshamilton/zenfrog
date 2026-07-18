@@ -7,39 +7,45 @@ interface DocumentViewerProps {
 }
 
 const DocumentViewer = ({ documents }: DocumentViewerProps) => {
-  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
+  const [expandedDocumentId, setExpandedDocumentId] = useState<number | null>(null)
 
   return (
     <div className="document-viewer">
       <div className="document-list">
         <h3>Documents</h3>
-        <div className="document-items">
-          {documents.map((doc) => (
-            <div
-              key={doc.id}
-              className={`document-item ${selectedDocument?.id === doc.id ? 'selected' : ''}`}
-              onClick={() => setSelectedDocument(doc)}
-            >
-              <h4>{doc.title}</h4>
-            </div>
-          ))}
-        </div>
-      </div>
-      
-      <div className="document-content">
-        {selectedDocument ? (
-          <div>
-            <h3>{selectedDocument.title}</h3>
-            <div 
-              className="content"
-              style={{ whiteSpace : 'pre-line' }}
-            >
-              {selectedDocument.content}
-            </div>
+        {documents.length === 0 ? (
+          <div className="no-document">
+            <p>No retrieved documents yet.</p>
           </div>
         ) : (
-          <div className="no-document">
-            <p>Select a document to view its content</p>
+          <div className="document-items">
+            {documents.map((doc) => {
+              const isExpanded = expandedDocumentId === doc.id
+
+              return (
+                <article
+                  key={doc.id}
+                  className={`document-item ${isExpanded ? 'expanded' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="document-item-toggle"
+                    onClick={() => setExpandedDocumentId(isExpanded ? null : doc.id)}
+                    aria-expanded={isExpanded}
+                  >
+                    <h4>{doc.title}</h4>
+                    <span className="document-item-caret" aria-hidden="true">
+                      {isExpanded ? '▾' : '▸'}
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <div className="document-item-content">
+                      {doc.content}
+                    </div>
+                  )}
+                </article>
+              )
+            })}
           </div>
         )}
       </div>
